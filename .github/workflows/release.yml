@@ -54,9 +54,11 @@ jobs:
             EXT=""
           fi
           ARTIFACT="BJORN_Manager_v${VERSION}_${PLATFORM}${EXT}"
+          DEB_ARTIFACT="bjorn-manager_${VERSION}_amd64.deb"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "platform=$PLATFORM" >> "$GITHUB_OUTPUT"
           echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "deb_artifact=$DEB_ARTIFACT" >> "$GITHUB_OUTPUT"
 
       - name: Build binary
         run: python build.py --version ${{ steps.meta.outputs.version }}
@@ -66,6 +68,54 @@ jobs:
         with:
           name: ${{ steps.meta.outputs.artifact }}
           path: dist/${{ steps.meta.outputs.artifact }}
+          if-no-files-found: error
+
+      - name: Build Debian package
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          BIN_NAME="${{ steps.meta.outputs.artifact }}"
+          DEB_NAME="${{ steps.meta.outputs.deb_artifact }}"
+          PKG_ROOT="pkgroot"
+
+          rm -rf "$PKG_ROOT"
+          mkdir -p "$PKG_ROOT/DEBIAN" "$PKG_ROOT/usr/local/bin" "$PKG_ROOT/usr/share/applications" "$PKG_ROOT/usr/share/icons/hicolor/256x256/apps"
+
+          install -m 755 "dist/$BIN_NAME" "$PKG_ROOT/usr/local/bin/bjorn-manager"
+          install -m 644 "assets/bjorn.png" "$PKG_ROOT/usr/share/icons/hicolor/256x256/apps/bjorn-manager.png"
+
+          cat > "$PKG_ROOT/usr/share/applications/bjorn-manager.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=BJORN Manager
+          Exec=/usr/local/bin/bjorn-manager
+          Icon=bjorn-manager
+          Terminal=false
+          Categories=Utility;Network;
+          EOF
+
+          cat > "$PKG_ROOT/DEBIAN/control" <<EOF
+          Package: bjorn-manager
+          Version: $VERSION
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Infinition
+          Depends: python3-gi, gir1.2-webkit2-4.1 | gir1.2-webkit2-4.0, libgtk-3-0, libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37
+          Description: BJORN Manager desktop companion application
+           Discover, connect, install, and control BJORN devices.
+          EOF
+
+          dpkg-deb --build "$PKG_ROOT" "dist/$DEB_NAME"
+
+      - name: Upload Debian package artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.deb_artifact }}
+          path: dist/${{ steps.meta.outputs.deb_artifact }}
           if-no-files-found: error
 
   release:

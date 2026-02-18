@@ -62,7 +62,19 @@
 
 - Download the latest release artifact for your OS.
 - Windows: run the `.exe`.
-- Linux: run the Linux binary (`chmod +x <file>` if needed).
+- Linux:
+  - Preferred: install the `.deb`
+    - `sudo apt install ./bjorn-manager_<version>_amd64.deb`
+    - launch with app menu or `bjorn-manager`
+  - Alternative: standalone binary
+    - `chmod +x BJORN_Manager_v<version>_linux`
+    - `./BJORN_Manager_v<version>_linux`
+- Linux GUI runtime note:
+  - BJORN Manager uses `pywebview`, which needs a system GUI backend (GTK/WebKit).
+  - The `.deb` declares required dependencies on Debian/Ubuntu.
+  - If you run the standalone binary and get a GTK/Qt backend error, install:
+    - `sudo apt install -y python3-gi gir1.2-webkit2-4.1 libgtk-3-0 libwebkit2gtk-4.1-0`
+    - (on older distros, use the `4.0` package variants)
 - Allow firewall access on first launch if prompted.
 
 ## Quick Start (Recommended)

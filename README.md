@@ -64,17 +64,23 @@
 - Windows: run the `.exe`.
 - Linux:
   - Preferred: install the `.deb`
-    - `sudo apt install ./bjorn-manager_<version>_amd64.deb`
+    - PC Linux (x86_64): `sudo apt install ./bjorn-manager_<version>_amd64.deb`
+    - Raspberry Pi OS 32-bit (armhf): `sudo apt install ./bjorn-manager_<version>_armhf.deb`
     - launch with app menu or `bjorn-manager`
   - Alternative: standalone binary
-    - `chmod +x BJORN_Manager_v<version>_linux`
-    - `./BJORN_Manager_v<version>_linux`
+    - x86_64: `BJORN_Manager_v<version>_linux`
+    - armhf: `BJORN_Manager_v<version>_linux_armhf`
+    - `chmod +x <binary>` then `./<binary>`
 - Linux GUI runtime note:
   - BJORN Manager uses `pywebview`, which needs a system GUI backend (GTK/WebKit).
   - The `.deb` declares required dependencies on Debian/Ubuntu.
   - If you run the standalone binary and get a GTK/Qt backend error, install:
     - `sudo apt install -y python3-gi gir1.2-webkit2-4.1 libgtk-3-0 libwebkit2gtk-4.1-0`
     - (on older distros, use the `4.0` package variants)
+  - The `.deb` launcher forces GTK backend (`PYWEBVIEW_GUI=gtk`) for better compatibility.
+  - Manual debug launch:
+    - `PYWEBVIEW_GUI=gtk bjorn-manager`
+    - if it still fails, run `ldd /usr/lib/bjorn-manager/bjorn-manager-bin | grep "not found"`
 - Allow firewall access on first launch if prompted.
 
 ## Quick Start (Recommended)

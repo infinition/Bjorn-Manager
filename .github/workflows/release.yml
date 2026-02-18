@@ -81,16 +81,22 @@ jobs:
           PKG_ROOT="pkgroot"
 
           rm -rf "$PKG_ROOT"
-          mkdir -p "$PKG_ROOT/DEBIAN" "$PKG_ROOT/usr/local/bin" "$PKG_ROOT/usr/share/applications" "$PKG_ROOT/usr/share/icons/hicolor/256x256/apps"
+          mkdir -p "$PKG_ROOT/DEBIAN" "$PKG_ROOT/usr/bin" "$PKG_ROOT/usr/lib/bjorn-manager" "$PKG_ROOT/usr/share/applications" "$PKG_ROOT/usr/share/icons/hicolor/256x256/apps"
 
-          install -m 755 "dist/$BIN_NAME" "$PKG_ROOT/usr/local/bin/bjorn-manager"
+          install -m 755 "dist/$BIN_NAME" "$PKG_ROOT/usr/lib/bjorn-manager/bjorn-manager-bin"
+          cat > "$PKG_ROOT/usr/bin/bjorn-manager" <<'EOF'
+          #!/bin/sh
+          export PYWEBVIEW_GUI=gtk
+          exec /usr/lib/bjorn-manager/bjorn-manager-bin "$@"
+          EOF
+          chmod 755 "$PKG_ROOT/usr/bin/bjorn-manager"
           install -m 644 "assets/bjorn.png" "$PKG_ROOT/usr/share/icons/hicolor/256x256/apps/bjorn-manager.png"
 
           cat > "$PKG_ROOT/usr/share/applications/bjorn-manager.desktop" <<'EOF'
           [Desktop Entry]
           Type=Application
           Name=BJORN Manager
-          Exec=/usr/local/bin/bjorn-manager
+          Exec=/usr/bin/bjorn-manager
           Icon=bjorn-manager
           Terminal=false
           Categories=Utility;Network;
@@ -103,7 +109,7 @@ jobs:
           Priority: optional
           Architecture: amd64
           Maintainer: Infinition
-          Depends: python3-gi, gir1.2-webkit2-4.1 | gir1.2-webkit2-4.0, libgtk-3-0, libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37
+          Depends: python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1 | gir1.2-webkit2-4.0, libgtk-3-0, libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37
           Description: BJORN Manager desktop companion application
            Discover, connect, install, and control BJORN devices.
           EOF
@@ -118,10 +124,108 @@ jobs:
           path: dist/${{ steps.meta.outputs.deb_artifact }}
           if-no-files-found: error
 
+  build_armhf:
+    name: Build (linux-armhf)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Compute ARMHF metadata
+        id: meta_armhf
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "arm_bin=BJORN_Manager_v${VERSION}_linux_armhf" >> "$GITHUB_OUTPUT"
+          echo "arm_deb=bjorn-manager_${VERSION}_armhf.deb" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            assets
+            bjorn_manager
+            bjorn_ui.html
+            build.py
+            requirements.txt
+            run.py
+          sparse-checkout-cone-mode: true
+
+      - name: Build ARMHF binary and .deb (emulated)
+        uses: uraimo/run-on-arch-action@v2
+        with:
+          arch: armv7
+          distro: ubuntu22.04
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update -y
+            apt-get install -y python3 python3-pip python3-dev build-essential dpkg-dev
+          run: |
+            set -euo pipefail
+            python3 -m pip install --upgrade pip
+            pip3 install -r requirements.txt
+
+            VERSION="${{ steps.meta_armhf.outputs.version }}"
+            python3 build.py --version "$VERSION"
+
+            ARM_BIN="BJORN_Manager_v${VERSION}_linux_armhf"
+            mv "dist/BJORN_Manager_v${VERSION}_linux" "dist/${ARM_BIN}"
+
+            DEB_NAME="bjorn-manager_${VERSION}_armhf.deb"
+            PKG_ROOT="pkgroot_armhf"
+            rm -rf "$PKG_ROOT"
+            mkdir -p "$PKG_ROOT/DEBIAN" "$PKG_ROOT/usr/bin" "$PKG_ROOT/usr/lib/bjorn-manager" "$PKG_ROOT/usr/share/applications" "$PKG_ROOT/usr/share/icons/hicolor/256x256/apps"
+
+            install -m 755 "dist/${ARM_BIN}" "$PKG_ROOT/usr/lib/bjorn-manager/bjorn-manager-bin"
+            cat > "$PKG_ROOT/usr/bin/bjorn-manager" <<'EOF'
+            #!/bin/sh
+            export PYWEBVIEW_GUI=gtk
+            exec /usr/lib/bjorn-manager/bjorn-manager-bin "$@"
+            EOF
+            chmod 755 "$PKG_ROOT/usr/bin/bjorn-manager"
+            install -m 644 "assets/bjorn.png" "$PKG_ROOT/usr/share/icons/hicolor/256x256/apps/bjorn-manager.png"
+
+            cat > "$PKG_ROOT/usr/share/applications/bjorn-manager.desktop" <<'EOF'
+            [Desktop Entry]
+            Type=Application
+            Name=BJORN Manager
+            Exec=/usr/bin/bjorn-manager
+            Icon=bjorn-manager
+            Terminal=false
+            Categories=Utility;Network;
+            EOF
+
+            cat > "$PKG_ROOT/DEBIAN/control" <<EOF
+            Package: bjorn-manager
+            Version: $VERSION
+            Section: utils
+            Priority: optional
+            Architecture: armhf
+            Maintainer: Infinition
+            Depends: python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1 | gir1.2-webkit2-4.0, libgtk-3-0, libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37
+            Description: BJORN Manager desktop companion application
+             Discover, connect, install, and control BJORN devices.
+            EOF
+
+            dpkg-deb --build "$PKG_ROOT" "dist/$DEB_NAME"
+
+      - name: Upload ARMHF binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta_armhf.outputs.arm_bin }}
+          path: dist/${{ steps.meta_armhf.outputs.arm_bin }}
+          if-no-files-found: error
+
+      - name: Upload ARMHF Debian package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta_armhf.outputs.arm_deb }}
+          path: dist/${{ steps.meta_armhf.outputs.arm_deb }}
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, build_armhf]
 
     steps:
       - name: Download artifacts

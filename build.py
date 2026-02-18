@@ -50,6 +50,16 @@ HIDDEN_IMPORTS = [
     "certifi",
 ]
 
+EXCLUDED_BUILD_PATHS = {
+    "wiki",
+    ".nojekyll",
+    "acidwiki.json",
+    "index.html",
+    "robots.txt",
+    "sw.js",
+    "security.txt",
+}
+
 
 def ask_version() -> str:
     """Prompt the user for a version string."""
@@ -112,6 +122,11 @@ def build(version: str) -> None:
     sep = ";" if sys.platform == "win32" else ":"
     add_data_args = []
     for src, dst in DATA_FILES:
+        normalized = src.replace("\\", "/").lstrip("./")
+        root_name = normalized.split("/", 1)[0]
+        if normalized in EXCLUDED_BUILD_PATHS or root_name in EXCLUDED_BUILD_PATHS:
+            print(f"[INFO] Excluded from build by policy: {src}")
+            continue
         if os.path.exists(src):
             add_data_args.extend(["--add-data", f"{src}{sep}{dst}"])
         else:
@@ -131,6 +146,7 @@ def build(version: str) -> None:
         "PyInstaller",
         "--onefile",
         "--windowed",
+        "--clean",
         "--noconfirm",
         f"--name={exe_name}",
         *icon_arg,

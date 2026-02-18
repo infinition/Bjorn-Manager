@@ -1,0 +1,35 @@
+{
+  "name": "BJORN-MANAGER WIKI",
+  "short_name": "Bjorn-Manager",
+  "description": "Official Documentation and Wiki for Bjorn-Manager",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0B0C0E",
+  "theme_color": "#22c55e",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "wiki/assets/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "wiki/assets/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Search Wiki",
+      "url": "./index.html?search=true",
+      "icons": [
+        {
+          "src": "wiki/assets/logo.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}

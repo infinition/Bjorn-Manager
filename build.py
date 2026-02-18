@@ -50,6 +50,18 @@ HIDDEN_IMPORTS = [
     "certifi",
 ]
 
+LINUX_HIDDEN_IMPORTS = [
+    # Force pywebview Qt backend modules into the frozen Linux binary.
+    "webview.platforms.qt",
+    "qtpy",
+    "PyQt6",
+    "PyQt6.QtCore",
+    "PyQt6.QtGui",
+    "PyQt6.QtWidgets",
+    "PyQt6.QtWebEngineCore",
+    "PyQt6.QtWebEngineWidgets",
+]
+
 EXCLUDED_BUILD_PATHS = {
     "wiki",
     ".nojekyll",
@@ -133,7 +145,11 @@ def build(version: str) -> None:
             print(f"[WARNING] Data file not found, skipping: {src}")
 
     hidden_args = []
-    for mod in HIDDEN_IMPORTS:
+    hidden_imports = list(HIDDEN_IMPORTS)
+    if sys.platform.startswith("linux"):
+        hidden_imports.extend(LINUX_HIDDEN_IMPORTS)
+
+    for mod in hidden_imports:
         hidden_args.extend(["--hidden-import", mod])
 
     platform_tag = get_platform_tag()

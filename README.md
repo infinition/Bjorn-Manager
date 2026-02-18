@@ -70,14 +70,14 @@
     - x86_64: `BJORN_Manager_v<version>_linux`
     - `chmod +x <binary>` then `./<binary>`
 - Linux GUI runtime note:
-  - BJORN Manager uses `pywebview`, which needs a system GUI backend (GTK/WebKit).
+  - BJORN Manager uses `pywebview`, which needs a GUI backend.
   - The `.deb` declares required dependencies on Debian/Ubuntu.
-  - If you run the standalone binary and get a GTK/Qt backend error, install:
-    - `sudo apt install -y python3-gi gir1.2-webkit2-4.1 libgtk-3-0 libwebkit2gtk-4.1-0`
-    - (on older distros, use the `4.0` package variants)
-  - The `.deb` launcher forces GTK backend (`PYWEBVIEW_GUI=gtk`) for better compatibility.
+  - Current release `.deb` uses the Qt backend by default.
+  - If launch fails on a minimal Linux desktop, install missing runtime libs:
+    - `sudo apt install -y libglib2.0-0 libnss3 libx11-6 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxtst6 libxkbcommon-x11-0 libdbus-1-3 libasound2`
+  - The `.deb` launcher sets `PYWEBVIEW_GUI=qt` and `QT_API=pyqt6` unless already defined.
   - Manual debug launch:
-    - `PYWEBVIEW_GUI=gtk bjorn-manager`
+    - `PYWEBVIEW_GUI=qt QT_API=pyqt6 bjorn-manager`
     - if it still fails, run `ldd /usr/lib/bjorn-manager/bjorn-manager-bin | grep "not found"`
 - Allow firewall access on first launch if prompted.
 

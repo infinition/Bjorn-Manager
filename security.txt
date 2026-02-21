@@ -1,4 +1,4 @@
 Contact: https://github.com/infinition/Bjorn-Manager/issues
-Expires: 2027-02-20T05:18:57.000Z
+Expires: 2027-02-21T05:09:04.000Z
 Preferred-Languages: en, fr
 Policy: https://github.com/infinition/Bjorn-Manager/blob/wiki/SECURITY.md

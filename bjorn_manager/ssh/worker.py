@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 import re
 import shlex
@@ -48,6 +49,18 @@ chmod -R 755 /home/bjorn/Bjorn || true
 rm -f Bjorn.zip
 echo "Deploy complete"
 """
+
+
+def _upload_text_lf(sftp: paramiko.SFTPClient, local_path: str, remote_path: str) -> None:
+    """Upload a text file, converting CRLF → LF on the fly.
+
+    This prevents '\\r' syntax errors when shell scripts edited on Windows
+    are uploaded to a Linux target via SFTP.
+    """
+    with open(local_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    sftp.putfo(io.BytesIO(content.encode("utf-8")), remote_path)
 
 
 class SSHWorker:
@@ -176,7 +189,11 @@ class SSHWorker:
         sftp = client.open_sftp()
         try:
             self.log(f"[SFTP] Upload {os.path.basename(local_path)} → {remote_path}")
-            sftp.put(local_path, remote_path)
+            # Convert CRLF → LF for shell scripts and text config files
+            if local_path.endswith((".sh", ".py", ".conf", ".cfg", ".txt", ".json", ".service")):
+                _upload_text_lf(sftp, local_path, remote_path)
+            else:
+                sftp.put(local_path, remote_path)
             self.log("[SFTP] Upload complete.", "success")
         finally:
             sftp.close()
@@ -185,16 +202,25 @@ class SSHWorker:
         """Deploy Bjorn.zip for debug mode to /home/bjorn/Bjorn."""
         try:
             remote_zip = "/home/bjorn/Bjorn.zip"
-            self.upload_file(local_zip_path, remote_zip)
+            # Zip is binary — use raw sftp.put via direct SFTP (bypass upload_file text conversion)
+            client = self._ensure_connected()
+            sftp = client.open_sftp()
+            try:
+                self.log(f"[SFTP] Upload {os.path.basename(local_zip_path)} → {remote_zip}")
+                sftp.put(local_zip_path, remote_zip)
+                self.log("[SFTP] Upload complete.", "success")
+            finally:
+                sftp.close()
+
             self.log("[RUN] Extracting Bjorn.zip to /home/bjorn/Bjorn ...", "info")
 
-            # Upload and run deploy script
+            # Upload and run deploy script (convert CRLF just in case)
             client = self._ensure_connected()
             sftp = client.open_sftp()
             remote_script = "/home/bjorn/deploy_tmp.sh"
             try:
-                with sftp.file(remote_script, "w") as f:
-                    f.write(_DEPLOY_SCRIPT)
+                content = _DEPLOY_SCRIPT.replace("\r\n", "\n").replace("\r", "\n")
+                sftp.putfo(io.BytesIO(content.encode("utf-8")), remote_script)
             finally:
                 sftp.close()
 
@@ -223,6 +249,9 @@ class SSHWorker:
     def upload_install_scripts(self, assets_dir: str) -> str:
         """Upload install_bjorn.sh + lib/ folder to /home/bjorn/.
 
+        All .sh files are uploaded with CRLF → LF conversion to prevent
+        '\\r' syntax errors on the Linux target.
+
         Returns the remote path of the orchestrator script.
         """
         client = self._ensure_connected()
@@ -231,7 +260,7 @@ class SSHWorker:
             local_script = os.path.join(assets_dir, "install_bjorn.sh")
             remote_script = "/home/bjorn/install_bjorn.sh"
             self.log("[SFTP] Uploading install_bjorn.sh")
-            sftp.put(local_script, remote_script)
+            _upload_text_lf(sftp, local_script, remote_script)
 
             # Create remote lib/ directory
             remote_lib = "/home/bjorn/lib"
@@ -246,7 +275,7 @@ class SSHWorker:
                     local_path = os.path.join(local_lib, fname)
                     remote_path = f"{remote_lib}/{fname}"
                     self.log(f"[SFTP] Uploading lib/{fname}")
-                    sftp.put(local_path, remote_path)
+                    _upload_text_lf(sftp, local_path, remote_path)
 
             self.log("[SFTP] All install scripts uploaded", "success")
             return remote_script
@@ -272,7 +301,10 @@ class SSHWorker:
             epd_choice = params.get("epd_choice", 4)
             epd_version = epd_map.get(int(epd_choice), "epd2in13_V4")
 
-            manual_mode = "True" if params.get("manual_mode", True) else "False"
+            operation_mode = str(params.get("operation_mode", "") or "").strip().lower()
+            if operation_mode not in {"auto", "manual", "ai"}:
+                operation_mode = "manual" if params.get("manual_mode", True) else "ai"
+            manual_mode = "True" if operation_mode == "manual" else "False"
             enable_auth = "y" if params.get("webui_enable_auth", False) else "n"
             web_pass = params.get("webui_password", "")
             bt_mac = params.get("bt_mac", "60:57:C8:47:E3:88")
@@ -286,6 +318,7 @@ class SSHWorker:
             env_parts = [
                 "NON_INTERACTIVE=1",
                 f"EPD_VERSION={shlex.quote(epd_version)}",
+                f"OPERATION_MODE={shlex.quote(operation_mode)}",
                 f"MANUAL_MODE={shlex.quote(manual_mode)}",
                 f"enable_auth={shlex.quote(enable_auth)}",
                 f"WEBUI_PASSWORD={shlex.quote(web_pass)}",
@@ -302,7 +335,7 @@ class SSHWorker:
             safe_flag = shlex.quote(install_mode_flag)
             command = f"sudo -S {env_str} bash {safe_script} {safe_flag}"
 
-            self.log(f"[RUN] Starting installation (branch={git_branch}, mode={install_mode})")
+            self.log(f"[RUN] Starting installation (branch={git_branch}, mode={install_mode}, operation={operation_mode})")
 
             chan = client.get_transport().open_session()
             chan.get_pty()

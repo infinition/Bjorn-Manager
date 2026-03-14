@@ -9,14 +9,15 @@ execute_bluetooth_script() {
     AUTO_BT_CONNECT_SCRIPT="/usr/local/bin/auto_bt_connect.py"
     AUTO_BT_SERVICE="/etc/systemd/system/auto_bt_connect.service"
 
-    if mkdir -p "$BT_SETTINGS_DIR" >> "$LOG_FILE" 2>&1; then
-        log "SUCCESS" "Created directory $BT_SETTINGS_DIR"
+    if ensure_directory "$BT_SETTINGS_DIR" "Bluetooth settings directory"; then
+        log "SUCCESS" "Bluetooth settings directory is ready"
     else
         log "ERROR" "Failed to create directory $BT_SETTINGS_DIR"
         failed_apt_packages+=(".settings_bjorn directory creation")
         return 0
     fi
 
+    log_file_write_action "$BT_JSON" "Bluetooth configuration"
     cat > "$BT_JSON" << EOF
 {
     "device_mac": "$BLUETOOTH_MAC_ADDRESS"
@@ -24,6 +25,7 @@ execute_bluetooth_script() {
 EOF
     [ $? -eq 0 ] && log "SUCCESS" "Created bt.json at $BT_JSON" || { log "ERROR" "Failed to create bt.json"; failed_apt_packages+=("bt.json creation"); return 0; }
 
+    log_file_write_action "$AUTO_BT_CONNECT_SCRIPT" "auto_bt_connect.py"
     cat > "$AUTO_BT_CONNECT_SCRIPT" << 'EOF'
 #!/usr/bin/env python3
 import json, subprocess, time, logging, os
@@ -114,6 +116,7 @@ EOF
     [ $? -eq 0 ] && log "SUCCESS" "Created auto_bt_connect.py at $AUTO_BT_CONNECT_SCRIPT" || { log "ERROR" "Failed to create auto_bt_connect.py"; failed_apt_packages+=("auto_bt_connect.py creation"); return 0; }
     chmod +x "$AUTO_BT_CONNECT_SCRIPT" >> "$LOG_FILE" 2>&1 || { log "ERROR" "Failed to chmod auto_bt_connect.py"; failed_apt_packages+=("auto_bt_connect.py permissions"); }
 
+    log_file_write_action "$AUTO_BT_SERVICE" "auto_bt_connect.service"
     cat > "$AUTO_BT_SERVICE" << EOF
 [Unit]
 Description=Auto Bluetooth PAN Connect
@@ -132,6 +135,6 @@ EOF
     [ $? -eq 0 ] && log "SUCCESS" "Created auto_bt_connect.service at $AUTO_BT_SERVICE" || { log "ERROR" "Failed to create auto_bt_connect.service"; failed_apt_packages+=("auto_bt_connect.service creation"); return 0; }
 
     systemctl daemon-reload >> "$LOG_FILE" 2>&1 || { log "ERROR" "Failed to reload systemd daemon (bt)"; failed_apt_packages+=("systemd daemon reload (bt)"); }
-    systemctl enable auto_bt_connect.service >> "$LOG_FILE" 2>&1 || { log "ERROR" "Failed to enable auto_bt_connect.service"; failed_apt_packages+=("auto_bt_connect.service enable"); }
-    systemctl start auto_bt_connect.service >> "$LOG_FILE" 2>&1 || { log "ERROR" "Failed to start auto_bt_connect.service"; failed_apt_packages+=("auto_bt_connect.service start"); }
+    ensure_service_enabled auto_bt_connect.service "auto_bt_connect.service" || failed_apt_packages+=("auto_bt_connect.service enable")
+    start_or_restart_service auto_bt_connect.service "auto_bt_connect.service" || failed_apt_packages+=("auto_bt_connect.service start")
 }

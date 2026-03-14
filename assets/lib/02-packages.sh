@@ -2,19 +2,29 @@
 # BJORN Installer — Package management (APT + PIP)
 # Sourced by install_bjorn.sh (requires 00-common.sh, 01-platform.sh)
 
+# Run apt-get in a way that never asks interactive conffile questions.
+apt_get_noninteractive() {
+    DEBIAN_FRONTEND=noninteractive \
+    APT_LISTCHANGES_FRONTEND=none \
+    apt-get \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
+        "$@"
+}
+
 # Safe apt install with optional fallback
 apt_install_safe() {
     # usage: apt_install_safe pkg [fallback_pkg]
     local pkg="$1"
     local fallback="$2"
     log "INFO" "Installing $pkg..."
-    if apt-get install -y "$pkg" >> "$LOG_FILE" 2>&1; then
+    if apt_get_noninteractive install -y "$pkg" >> "$LOG_FILE" 2>&1; then
         log "SUCCESS" "Installed $pkg"
         return 0
     fi
     if [ -n "$fallback" ]; then
         log "WARNING" "Failed to install $pkg, trying fallback $fallback"
-        if apt-get install -y "$fallback" >> "$LOG_FILE" 2>&1; then
+        if apt_get_noninteractive install -y "$fallback" >> "$LOG_FILE" 2>&1; then
             log "SUCCESS" "Installed fallback $fallback (for $pkg)"
             return 0
         fi
@@ -53,7 +63,7 @@ pip_install() {
 # Avoid heavy builds on armv6 by taking crypto/numpy from APT
 install_python_stack_zero1() {
     log "INFO" "armv6 detected → installing Python crypto/scientific stack via APT"
-    apt-get update >> "$LOG_FILE" 2>&1 || true
+    apt_get_noninteractive update >> "$LOG_FILE" 2>&1 || true
     apt_install_safe "python3-paramiko" || true
     apt_install_safe "python3-cryptography" || true
     apt_install_safe "python3-bcrypt" || true
@@ -71,10 +81,11 @@ install_dependencies() {
     [ -z "$CURRENT_ARCH" ] && CURRENT_ARCH=$(dpkg --print-architecture)
     log "INFO" "Detected architecture: $CURRENT_ARCH"
 
-    # Prefer piwheels for faster, wheel-first installs
-    ensure_piwheels
+    # Apply piwheels only after python3-pip is installed, otherwise dpkg may
+    # prompt about /etc/pip.conf when the package drops its own config file.
+    log "INFO" "piwheels configuration will be applied after python3-pip installation"
 
-    # Base required packages (keep content, adapt around conflicts)
+    # Base required packages (libatlas-base-dev and libssl1.1 removed, handled by libopenblas-dev and libssl-dev)
     packages=(
         "python3-pip"
         "python3-psutil"
@@ -99,8 +110,6 @@ install_dependencies() {
         "libssl-dev"
         "libgpiod-dev"
         "libi2c-dev"
-        "libssl1.1"
-        "libatlas-base-dev"
         "build-essential"
         "gobuster"
         "arping"
@@ -144,7 +153,7 @@ install_dependencies() {
                 fi
 
                 # Fix any broken deps (non-fatal)
-                if ! apt-get install -f -y >> "$LOG_FILE" 2>&1; then
+                if ! apt_get_noninteractive install -f -y >> "$LOG_FILE" 2>&1; then
                     log "ERROR" "Failed to fix dependencies after local install"
                     failed_apt_packages+=("dependencies fix after local dpkg -i")
                 else
@@ -155,7 +164,7 @@ install_dependencies() {
 
         "online")
             # Update package list (non-fatal on failure)
-            if apt-get update >> "$LOG_FILE" 2>&1; then
+            if apt_get_noninteractive update >> "$LOG_FILE" 2>&1; then
                 log "SUCCESS" "Package list updated successfully"
             else
                 log "ERROR" "Failed to update package list (continuing)"
@@ -165,10 +174,6 @@ install_dependencies() {
             # Install packages with smart fallbacks
             for package in "${packages[@]}"; do
                 case "$package" in
-                    libssl1.1)
-                        # Try libssl1.1; if not available, fallback to libssl3
-                        apt_install_safe "libssl1.1" "libssl3" || true
-                        ;;
                     bluez-tools)
                         # Some images might not have bluez-tools; it's optional
                         apt_install_safe "bluez-tools" || true
@@ -196,6 +201,8 @@ install_dependencies() {
             failed_apt_packages+=("invalid INSTALL_MODE=$INSTALL_MODE")
             ;;
     esac
+
+    ensure_piwheels
 
     # On Zero 1 (armv6), install crypto/scientific libs from APT to avoid heavy pip builds
     if [ "$IS_ARMV6" -eq 1 ]; then

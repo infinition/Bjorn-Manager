@@ -23,7 +23,7 @@ declare -a failed_pip_packages=()
 BJORN_USER="bjorn"
 BJORN_PATH="/home/${BJORN_USER}/Bjorn"
 CURRENT_STEP=0
-TOTAL_STEPS=13
+TOTAL_STEPS=14
 
 # Logging function
 log() {
@@ -71,6 +71,103 @@ check_success() {
 # Prompt helper
 display_prompt() {
     echo -e "$1"
+}
+
+ensure_directory() {
+    local dir="$1"
+    local label="${2:-Directory}"
+    if [ -d "$dir" ]; then
+        log "INFO" "$label already exists: $dir"
+        return 0
+    fi
+    if mkdir -p "$dir" >> "$LOG_FILE" 2>&1; then
+        log "SUCCESS" "Created $label: $dir"
+        return 0
+    fi
+    log "ERROR" "Failed to create $label: $dir"
+    return 1
+}
+
+ensure_line_in_file() {
+    local file="$1"
+    local line="$2"
+    local label="${3:-line}"
+    if [ ! -f "$file" ]; then
+        touch "$file" >> "$LOG_FILE" 2>&1 || true
+    fi
+    if grep -Fqx "$line" "$file" 2>/dev/null; then
+        log "INFO" "$label already present in $file"
+        return 0
+    fi
+    if printf '%s\n' "$line" >> "$file" 2>>"$LOG_FILE"; then
+        log "SUCCESS" "Added $label to $file"
+        return 0
+    fi
+    log "ERROR" "Failed to add $label to $file"
+    return 1
+}
+
+remove_lines_matching() {
+    local file="$1"
+    local pattern="$2"
+    local label="${3:-entries}"
+    if [ ! -f "$file" ]; then
+        return 0
+    fi
+    if grep -Eq "$pattern" "$file" 2>/dev/null; then
+        if sed -i "/$pattern/d" "$file" >> "$LOG_FILE" 2>&1; then
+            log "INFO" "Removed existing $label from $file"
+            return 0
+        fi
+        log "ERROR" "Failed to remove existing $label from $file"
+        return 1
+    fi
+    log "INFO" "No existing $label found in $file"
+    return 0
+}
+
+log_file_write_action() {
+    local file="$1"
+    local label="${2:-file}"
+    if [ -e "$file" ]; then
+        log "INFO" "$label already exists at $file; updating it"
+    else
+        log "INFO" "Creating $label at $file"
+    fi
+}
+
+ensure_service_enabled() {
+    local service="$1"
+    local label="${2:-$1}"
+    if systemctl is-enabled --quiet "$service" 2>/dev/null; then
+        log "INFO" "$label is already enabled"
+        return 0
+    fi
+    if systemctl enable "$service" >> "$LOG_FILE" 2>&1; then
+        log "SUCCESS" "Enabled $label"
+        return 0
+    fi
+    log "ERROR" "Failed to enable $label"
+    return 1
+}
+
+start_or_restart_service() {
+    local service="$1"
+    local label="${2:-$1}"
+    if systemctl is-active --quiet "$service" 2>/dev/null; then
+        if systemctl restart "$service" >> "$LOG_FILE" 2>&1; then
+            log "SUCCESS" "Restarted $label"
+            return 0
+        fi
+        log "ERROR" "Failed to restart $label"
+        return 1
+    fi
+    if systemctl start "$service" >> "$LOG_FILE" 2>&1; then
+        log "SUCCESS" "Started $label"
+        return 0
+    fi
+    log "ERROR" "Failed to start $label"
+    return 1
 }
 
 # Cleanup handler (for temporary extraction directory)

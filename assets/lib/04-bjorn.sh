@@ -7,6 +7,7 @@
 
 setup_bjorn() {
     log "INFO" "Setting up BJORN..."
+    local resolved_operation_mode=""
 
     # Ensure bjorn user exists
     if ! id -u $BJORN_USER >/dev/null 2>&1; then
@@ -18,6 +19,8 @@ setup_bjorn() {
             failed_apt_packages+=("BJORN user creation")
             return 0
         fi
+    else
+        log "INFO" "BJORN user already exists"
     fi
 
     # Move to /home/bjorn
@@ -65,6 +68,15 @@ setup_bjorn() {
 
     # Patch shared.py with selected EPD & mode
     if [ -f "shared.py" ]; then
+        resolved_operation_mode="${OPERATION_MODE:-}"
+        if [ -z "$resolved_operation_mode" ]; then
+            if [ "$MANUAL_MODE" = "True" ]; then
+                resolved_operation_mode="manual"
+            else
+                resolved_operation_mode="ai"
+            fi
+        fi
+
         sed -i '/"epd_type": "epd2in13_V4",/s/"epd2in13_V4"/"'"$EPD_VERSION"'"/' shared.py >> "$LOG_FILE" 2>&1
         [ $? -eq 0 ] && log "SUCCESS" "Updated 'epd_type' in shared.py" \
                      || { log "ERROR" "Failed to update 'epd_type'"; failed_pip_packages+=("'epd_type' in shared.py"); }
@@ -73,23 +85,58 @@ setup_bjorn() {
         [ $? -eq 0 ] && log "SUCCESS" "Updated 'manual_mode' in shared.py" \
                      || { log "ERROR" "Failed to update 'manual_mode'"; failed_pip_packages+=("'manual_mode' in shared.py"); }
 
+        if grep -q '"operation_mode":' shared.py; then
+            sed -i 's/"operation_mode":[[:space:]]*"[^"]*"/"operation_mode": "'"$resolved_operation_mode"'"/' shared.py >> "$LOG_FILE" 2>&1
+            [ $? -eq 0 ] && log "SUCCESS" "Updated 'operation_mode' in shared.py" \
+                         || { log "WARNING" "Failed to update 'operation_mode' in shared.py"; }
+        else
+            log "INFO" "'operation_mode' not found in shared.py; skipping explicit operation mode patch"
+        fi
+
+        if [ "$EPD_VERSION" = "epd2in13_V2" ]; then
+            if grep -q '"screen_reversed":' shared.py; then
+                sed -i '/"screen_reversed":/s/True\|False/False/' shared.py >> "$LOG_FILE" 2>&1
+                [ $? -eq 0 ] && log "SUCCESS" "Set 'screen_reversed' to False for epd2in13_V2" \
+                             || { log "WARNING" "Failed to set 'screen_reversed' to False for epd2in13_V2"; }
+            else
+                log "INFO" "'screen_reversed' not found in shared.py; skipping V2 display orientation patch"
+            fi
+        fi
+
         # Backups & settings dirs
         log "INFO" "Creating backup directories and archive..."
-        if mkdir -p /home/$BJORN_USER/.backups_bjorn /home/$BJORN_USER/.settings_bjorn >> "$LOG_FILE" 2>&1; then
-            log "SUCCESS" "Created backup and settings directories"
+        if ensure_directory /home/$BJORN_USER/.backups_bjorn ".backups_bjorn directory" && \
+           ensure_directory /home/$BJORN_USER/.settings_bjorn ".settings_bjorn directory"; then
+            log "SUCCESS" "Backup and settings directories are ready"
         else
             log "ERROR" "Failed to create backup/settings directories"
             failed_pip_packages+=("Backup and settings directories creation")
         fi
 
         # Move character configurations
-        log "INFO" "Moving character configurations to .settings_bjorn directory"
-        if mv /home/$BJORN_USER/Bjorn/resources/default_config/characters/* /home/$BJORN_USER/.settings_bjorn/ >> "$LOG_FILE" 2>&1; then
-            log "SUCCESS" "Moved character configurations"
+        log "INFO" "Syncing character configurations to .settings_bjorn directory"
+        SOURCE_CHAR_DIR="/home/$BJORN_USER/Bjorn/resources/default_config/characters"
+        DEST_CHAR_DIR="/home/$BJORN_USER/.settings_bjorn"
+        shopt -s nullglob
+        character_files=("$SOURCE_CHAR_DIR"/*)
+        if [ ${#character_files[@]} -eq 0 ]; then
+            log "INFO" "No new character configurations to move (already moved or source directory empty)"
         else
-            log "ERROR" "Failed to move character configurations"
-            failed_pip_packages+=("Moving character configurations")
+            for character_file in "${character_files[@]}"; do
+                character_name="$(basename "$character_file")"
+                if [ -e "$DEST_CHAR_DIR/$character_name" ]; then
+                    log "INFO" "Character configuration already exists: $character_name"
+                    continue
+                fi
+                if mv "$character_file" "$DEST_CHAR_DIR/" >> "$LOG_FILE" 2>&1; then
+                    log "SUCCESS" "Moved character configuration: $character_name"
+                else
+                    log "ERROR" "Failed to move character configuration: $character_name"
+                    failed_pip_packages+=("Moving character configuration: $character_name")
+                fi
+            done
         fi
+        shopt -u nullglob
 
         # Ownership
         if chown -R $BJORN_USER:$BJORN_USER /home/$BJORN_USER/.settings_bjorn/ >> "$LOG_FILE" 2>&1; then
@@ -210,8 +257,20 @@ EOF
     fi
 
     # Groups for hardware access
-    if usermod -a -G spi,gpio,i2c $BJORN_USER >> "$LOG_FILE" 2>&1; then
-        log "SUCCESS" "Added bjorn user to required groups"
+    required_groups=(spi gpio i2c)
+    missing_groups=()
+    current_groups="$(id -nG "$BJORN_USER" 2>/dev/null || true)"
+    for group_name in "${required_groups[@]}"; do
+        if echo "$current_groups" | tr ' ' '\n' | grep -Fxq "$group_name"; then
+            log "INFO" "BJORN user is already in group: $group_name"
+        else
+            missing_groups+=("$group_name")
+        fi
+    done
+    if [ ${#missing_groups[@]} -eq 0 ]; then
+        log "INFO" "BJORN user already belongs to all required hardware groups"
+    elif usermod -a -G "$(IFS=,; echo "${missing_groups[*]}")" $BJORN_USER >> "$LOG_FILE" 2>&1; then
+        log "SUCCESS" "Added bjorn user to missing groups: ${missing_groups[*]}"
     else
         log "ERROR" "Failed to add bjorn user to required groups"
         failed_apt_packages+=("Adding bjorn user to groups")

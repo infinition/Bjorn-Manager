@@ -37,7 +37,45 @@ WEBUI_PASSWORD="${WEBUI_PASSWORD:-}"
 WEBUI_PASSWORD_CONFIRM="${WEBUI_PASSWORD_CONFIRM:-}"
 EPD_VERSION="${EPD_VERSION:-}"
 MANUAL_MODE="${MANUAL_MODE:-}"
+OPERATION_MODE="${OPERATION_MODE:-}"
 BLUETOOTH_MAC_ADDRESS="${BLUETOOTH_MAC_ADDRESS:-}"
+
+normalize_operation_mode() {
+    local raw
+    raw="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    case "$raw" in
+        a|auto) echo "auto" ;;
+        m|manual) echo "manual" ;;
+        ai) echo "ai" ;;
+        *) echo "" ;;
+    esac
+}
+
+operation_mode_to_manual_mode() {
+    case "${1:-manual}" in
+        manual) echo "True" ;;
+        auto|ai) echo "False" ;;
+        *) echo "True" ;;
+    esac
+}
+
+resolve_operation_mode() {
+    OPERATION_MODE="$(normalize_operation_mode "$OPERATION_MODE")"
+
+    if [ -n "$OPERATION_MODE" ]; then
+        MANUAL_MODE="$(operation_mode_to_manual_mode "$OPERATION_MODE")"
+        return
+    fi
+
+    case "$MANUAL_MODE" in
+        True) OPERATION_MODE="manual" ;;
+        False) OPERATION_MODE="ai" ;;
+        *)
+            OPERATION_MODE="manual"
+            MANUAL_MODE="True"
+            ;;
+    esac
+}
 
 # ── Parse command line arguments ────────────────────────────────────────
 while [[ "$#" -gt 0 ]]; do
@@ -84,6 +122,7 @@ while [[ "$#" -gt 0 ]]; do
             echo -e "\nNon-interactive env vars:"
             echo -e "  NON_INTERACTIVE=1   Enable non-interactive mode"
             echo -e "  EPD_VERSION         E-paper display type (e.g. epd2in13_V4)"
+            echo -e "  OPERATION_MODE      auto, manual or ai"
             echo -e "  MANUAL_MODE         True or False"
             echo -e "  enable_auth         y or n"
             echo -e "  WEBUI_PASSWORD      Web UI password (if enable_auth=y)"
@@ -119,11 +158,12 @@ main() {
     if [ "$NON_INTERACTIVE" = "1" ]; then
         log "INFO" "Non-interactive mode: using environment variables for configuration"
         : "${EPD_VERSION:=epd2in13_V4}"
-        : "${MANUAL_MODE:=True}"
+        : "${OPERATION_MODE:=manual}"
         : "${BLUETOOTH_MAC_ADDRESS:=60:57:C8:47:E3:88}"
         : "${enable_auth:=n}"
         : "${WEBUI_PASSWORD:=}"
         WEBUI_PASSWORD_CONFIRM="$WEBUI_PASSWORD"
+        resolve_operation_mode
     else
         # E-Paper Display Selection
         echo -e "\n${BLUE}Please select your E-Paper Display version:${NC}"
@@ -144,16 +184,18 @@ main() {
             esac
         done
 
-        # Manual vs AI Mode
-        echo -e "\n${BLUE}Start Bjorn in Manual Mode or AI Mode?${NC}"
-        echo "1. Manual Mode (default)"
-        echo "2. AI Mode"
+        # Auto / Manual / AI Mode
+        echo -e "\n${BLUE}Start Bjorn in Auto, Manual or AI Mode?${NC}"
+        echo "1. Auto Mode"
+        echo "2. Manual Mode (default)"
+        echo "3. AI Mode"
         while true; do
-            read -p "Enter your choice (1-2): " mode_choice
+            read -p "Enter your choice (1-3): " mode_choice
             case $mode_choice in
-                1) MANUAL_MODE="True"; break;;
-                2) MANUAL_MODE="False"; break;;
-                *) echo -e "${RED}Invalid choice. Please select 1 or 2.${NC}";;
+                1) OPERATION_MODE="auto"; MANUAL_MODE="False"; break;;
+                2) OPERATION_MODE="manual"; MANUAL_MODE="True"; break;;
+                3) OPERATION_MODE="ai"; MANUAL_MODE="False"; break;;
+                *) echo -e "${RED}Invalid choice. Please select 1, 2 or 3.${NC}";;
             esac
         done
 
@@ -184,8 +226,13 @@ main() {
         fi
     fi
 
+    resolve_operation_mode
     log "INFO" "Selected EPD: $EPD_VERSION"
-    log "INFO" "Selected mode: $( [ "$MANUAL_MODE" = "True" ] && echo "Manual" || echo "AI" )"
+    case "$OPERATION_MODE" in
+        auto) log "INFO" "Selected mode: Auto" ;;
+        ai) log "INFO" "Selected mode: AI" ;;
+        *) log "INFO" "Selected mode: Manual" ;;
+    esac
     log "INFO" "Git branch: $GIT_BRANCH"
 
     # ── Installation steps ──────────────────────────────────────────────
@@ -223,6 +270,9 @@ main() {
     CURRENT_STEP=$((CURRENT_STEP+1)); show_progress "Setting up services"
     setup_services
 
+    CURRENT_STEP=$((CURRENT_STEP+1)); show_progress "Setting up Wi-Fi Monitor Mode"
+    install_monitor_mode
+
     CURRENT_STEP=$((CURRENT_STEP+1)); show_progress "Verifying installation"
     verify_installation
 
@@ -244,6 +294,9 @@ main() {
 
     if [ "$NON_INTERACTIVE" = "1" ]; then
         log "INFO" "Non-interactive mode: skipping reboot prompt"
+        if [ "${BJORN_VERIFY_NEEDS_LOGS:-0}" = "1" ]; then
+            echo -e "${YELLOW}If BJORN is not fully ready yet, inspect the service with: journalctl -fu bjorn.service${NC}"
+        fi
     else
         read -p "Reboot now? (y/n): " reboot_now
         if [[ "$reboot_now" =~ ^[Yy]$ ]]; then
@@ -255,6 +308,9 @@ main() {
             fi
         else
             echo -e "${YELLOW}Reboot to apply all changes & run BJORN service.${NC}"
+            if [ "${BJORN_VERIFY_NEEDS_LOGS:-0}" = "1" ]; then
+                follow_bjorn_service_logs
+            fi
         fi
     fi
 

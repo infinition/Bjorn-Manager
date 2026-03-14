@@ -4,11 +4,13 @@
 
 setup_webui_auth() {
     log "INFO" "Setting up Web UI authentication..."
+    SETTINGS_DIR="/home/$BJORN_USER/.settings_bjorn"
+    WEBAPP_JSON="$SETTINGS_DIR/webapp.json"
 
     if [[ "$enable_auth" =~ ^[Yy]$ ]]; then
         log "INFO" "User enabled Web UI authentication."
-        if mkdir -p /home/$BJORN_USER/.settings_bjorn >> "$LOG_FILE" 2>&1; then
-            log "SUCCESS" "Created .settings_bjorn directory"
+        if ensure_directory "$SETTINGS_DIR" ".settings_bjorn directory"; then
+            log "SUCCESS" ".settings_bjorn directory is ready"
         else
             log "ERROR" "Failed to create .settings_bjorn directory"
             echo -e "${RED}Failed to create .settings_bjorn directory. Check the log for details.${NC}"
@@ -16,7 +18,8 @@ setup_webui_auth() {
             return 0
         fi
 
-        cat > /home/$BJORN_USER/.settings_bjorn/webapp.json << EOF
+        log_file_write_action "$WEBAPP_JSON" "webapp.json"
+        cat > "$WEBAPP_JSON" << EOF
 {
     "username": "bjorn",
     "password": "$WEBUI_PASSWORD",
@@ -35,24 +38,29 @@ EOF
         log "INFO" "User chose not to enable Web UI authentication."
 
         if [ -f "/home/$BJORN_USER/Bjorn/shared.py" ]; then
-            sed -i '/"webauth": true/s/"true"/"false"/I' /home/$BJORN_USER/Bjorn/shared.py >> "$LOG_FILE" 2>&1
-            if [ $? -eq 0 ]; then
-                log "SUCCESS" "Set 'webauth' to false in shared.py"
+            if grep -qi '"webauth":[[:space:]]*false' /home/$BJORN_USER/Bjorn/shared.py; then
+                log "INFO" "'webauth' is already disabled in shared.py"
             else
-                log "ERROR" "Failed to set 'webauth' to false in shared.py"
-                echo -e "${RED}Failed to modify shared.py. Check the log for details.${NC}"
-                failed_pip_packages+=("'webauth' in shared.py")
+                sed -i 's/"webauth":[[:space:]]*true/"webauth": false/I; s/"webauth":[[:space:]]*"true"/"webauth": false/I' /home/$BJORN_USER/Bjorn/shared.py >> "$LOG_FILE" 2>&1
+                if [ $? -eq 0 ]; then
+                    log "SUCCESS" "Set 'webauth' to false in shared.py"
+                else
+                    log "ERROR" "Failed to set 'webauth' to false in shared.py"
+                    echo -e "${RED}Failed to modify shared.py. Check the log for details.${NC}"
+                    failed_pip_packages+=("'webauth' in shared.py")
+                fi
             fi
 
-            if mkdir -p /home/$BJORN_USER/.settings_bjorn >> "$LOG_FILE" 2>&1; then
-                log "SUCCESS" "Created .settings_bjorn directory"
+            if ensure_directory "$SETTINGS_DIR" ".settings_bjorn directory"; then
+                log "SUCCESS" ".settings_bjorn directory is ready"
             else
                 log "ERROR" "Failed to create .settings_bjorn directory"
                 echo -e "${RED}Failed to create .settings_bjorn directory. Check the log for details.${NC}"
                 failed_pip_packages+=(".settings_bjorn directory creation")
             fi
 
-            cat > /home/$BJORN_USER/.settings_bjorn/webapp.json << EOF
+            log_file_write_action "$WEBAPP_JSON" "webapp.json"
+            cat > "$WEBAPP_JSON" << EOF
 {
     "username": "bjorn",
     "password": "bjorn",

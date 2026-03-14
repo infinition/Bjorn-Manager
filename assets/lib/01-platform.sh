@@ -66,7 +66,10 @@ detect_boot_paths() {
 # Check system compatibility (extended to support Debian too)
 check_system_compatibility() {
     log "INFO" "Checking system compatibility..."
-    local should_ask_confirmation=false
+    local compatibility_warning_count=0
+    local expected_version="13"
+    local total_ram
+    local available_space
 
     detect_platform
 
@@ -76,7 +79,8 @@ check_system_compatibility() {
     else
         log "WARNING" "Different hardware model detected."
         echo -e "${YELLOW}This script is primarily designed for Raspberry Pi hardware.${NC}"
-        should_ask_confirmation=true
+        echo -e "${YELLOW}Installation will continue, but some hardware-specific features may need manual adjustment.${NC}"
+        compatibility_warning_count=$((compatibility_warning_count+1))
     fi
 
     # 2. RAM check
@@ -84,7 +88,8 @@ check_system_compatibility() {
     if [ "$total_ram" -lt 410 ]; then
         log "WARNING" "Low RAM detected. Recommended >= 512MB (410MB with OS running), Found: ${total_ram}MB"
         echo -e "${YELLOW}System RAM is below the recommendation; continuing may be slower.${NC}"
-        should_ask_confirmation=true
+        echo -e "${YELLOW}This is only a warning. Resource constraints do not block installation.${NC}"
+        compatibility_warning_count=$((compatibility_warning_count+1))
     else
         log "SUCCESS" "RAM check passed: ${total_ram}MB available"
     fi
@@ -94,7 +99,8 @@ check_system_compatibility() {
     if [ "$available_space" -lt 4096 ]; then
         log "WARNING" "Low disk space. Recommended: 4GB, Found: ${available_space}MB"
         echo -e "${YELLOW}Free space below 4GB; installation may be impacted.${NC}"
-        should_ask_confirmation=true
+        echo -e "${YELLOW}This is only a warning. Installation will continue.${NC}"
+        compatibility_warning_count=$((compatibility_warning_count+1))
     else
         log "SUCCESS" "Disk space check passed: ${available_space}MB available"
     fi
@@ -104,43 +110,38 @@ check_system_compatibility() {
         if [[ "$OS_NAME" != "Raspbian GNU/Linux" && "$OS_NAME" != "Raspberry Pi OS" && "$OS_NAME" != "Debian GNU/Linux" ]]; then
             log "WARNING" "Different OS detected: ${OS_PRETTY}"
             echo -e "${YELLOW}This script was tested on Raspberry Pi OS / Debian. Detected: ${OS_PRETTY}.${NC}"
-            should_ask_confirmation=true
+            echo -e "${YELLOW}Packages and installation steps were prepared primarily for Debian 13 (Trixie). Installation will continue anyway.${NC}"
+            compatibility_warning_count=$((compatibility_warning_count+1))
         fi
         # Version advisory
-        expected_version="13"
         if [[ -n "$OS_VERSION_ID" && "$OS_VERSION_ID" != "$expected_version" ]]; then
-            log "WARNING" "OS version differs from tested baseline (12/Bookworm). Detected: ${OS_VERSION_ID} (${OS_CODENAME})"
-            echo -e "${YELLOW}Tested baseline is version 12 (Bookworm). Detected: ${OS_PRETTY}.${NC}"
-            should_ask_confirmation=true
+            log "WARNING" "OS version differs from tested baseline (13/Trixie). Detected: ${OS_VERSION_ID} (${OS_CODENAME})"
+            echo -e "${YELLOW}Packages and installation steps were prepared primarily for Debian 13 (Trixie). Detected: ${OS_PRETTY}.${NC}"
+            echo -e "${YELLOW}Installation will continue, but some packages or services may need manual adjustment on this OS version.${NC}"
+            compatibility_warning_count=$((compatibility_warning_count+1))
         else
             log "SUCCESS" "OS version advisory: ${OS_PRETTY}"
         fi
     else
         log "WARNING" "Could not determine OS version (/etc/os-release missing)"
-        should_ask_confirmation=true
+        echo -e "${YELLOW}Unable to confirm the OS version. Packages were prepared primarily for Debian 13 (Trixie), but installation will continue.${NC}"
+        compatibility_warning_count=$((compatibility_warning_count+1))
     fi
 
     # 5. Architecture check
     if [[ "$ARCH" != "armhf" && "$ARCH" != "arm64" ]]; then
         log "WARNING" "Non-arm architecture detected (${ARCH}). Script is optimized for armhf/arm64."
         echo -e "${YELLOW}Script is optimized for armhf/arm64.${NC}"
-        should_ask_confirmation=true
+        echo -e "${YELLOW}Installation will continue, but some package selections may require manual fixes.${NC}"
+        compatibility_warning_count=$((compatibility_warning_count+1))
     else
         log "SUCCESS" "Architecture check passed: ${ARCH}"
     fi
 
-    # 6. Confirm if warnings (skip in non-interactive mode)
-    if [ "$should_ask_confirmation" = true ]; then
-        if [ "$NON_INTERACTIVE" = "1" ]; then
-            log "INFO" "Non-interactive mode: auto-accepting compatibility warnings"
-        else
-            echo -e "\n${YELLOW}Some compatibility warnings were detected (see log). Continue anyway? (y/n)${NC}"
-            read -r response
-            if [[ ! "$response" =~ ^[Yy]$ ]]; then
-                log "INFO" "Installation aborted by user after compatibility warnings"
-                clean_exit 1
-            fi
-        fi
+    if [ "$compatibility_warning_count" -gt 0 ]; then
+        log "WARNING" "Compatibility checks completed with ${compatibility_warning_count} advisory warning(s)"
+        log "INFO" "Compatibility checks are advisory only; warnings do not block installation."
+        echo -e "${YELLOW}Compatibility warnings were detected, but installation is not blocked.${NC}"
     else
         log "SUCCESS" "All compatibility checks passed"
     fi

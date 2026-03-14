@@ -77,7 +77,7 @@ class Discovery:
         # device_key -> {"alias": str, "ips": set[str], "last_seen": float}
         self._registry: dict[str, dict] = {}
         self._registry_lock = threading.Lock()
-        self._stale_timeout: float = 90  # seconds before visual removal
+        self._stale_timeout: float = 90  # seconds before a device is marked offline
 
         # IPs to always ignore (gateways, routers, self)
         self._ignored_ips: set[str] = set()
@@ -364,16 +364,26 @@ class Discovery:
         while not self._stop:
             now = time.time()
             to_delete: list[str] = []
+            stale_ips: list[str] = []
 
             with self._registry_lock:
                 for key, rec in list(self._registry.items()):
                     if now - rec["last_seen"] > self._stale_timeout:
                         for ip in rec["ips"]:
+                            stale_ips.append(ip)
                             if self.api_callback:
                                 self.api_callback("device_gone", ip)
                         to_delete.append(key)
                 for key in to_delete:
                     self._registry.pop(key, None)
+
+            if stale_ips:
+                with self._seen_ips_lock:
+                    for ip in stale_ips:
+                        self._seen_ips.discard(ip)
+                for ip in stale_ips:
+                    self._id_by_ip.pop(ip, None)
+                    self._web_status_prev.pop(ip, None)
 
             for _ in range(5):
                 if self._stop:

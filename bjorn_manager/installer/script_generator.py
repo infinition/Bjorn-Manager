@@ -31,7 +31,8 @@ class ScriptGenerator:
             defaults):
 
             * ``epd_version``   -- e-paper display type (str)
-            * ``manual_mode``   -- boolean
+            * ``operation_mode``-- auto, manual or ai (str)
+            * ``manual_mode``   -- boolean fallback for legacy callers
             * ``bluetooth_mac`` -- MAC address string
             * ``webui_auth``    -- boolean, enable web UI auth
             * ``webui_password``-- plaintext password (str)
@@ -71,11 +72,16 @@ class ScriptGenerator:
             config.get("system_configs", {})
         )
 
+        operation_mode = str(config.get("operation_mode", "") or "").strip().lower()
+        if operation_mode not in {"auto", "manual", "ai"}:
+            operation_mode = "manual" if config.get("manual_mode", True) else "ai"
+
         script_content = _SCRIPT_TEMPLATE.format(
             timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
             total_steps=total_steps,
             epd_version=config.get("epd_version", "epd2in13_V4"),
-            manual_mode="True" if config.get("manual_mode", True) else "False",
+            operation_mode=operation_mode,
+            manual_mode="True" if operation_mode == "manual" else "False",
             bluetooth_mac=config.get("bluetooth_mac", "60:57:C8:47:E3:88"),
             webui_auth="true" if config.get("webui_auth", False) else "false",
             webui_password=config.get("webui_password", ""),
@@ -292,6 +298,7 @@ announce_step() {{
 
 # Configuration variables
 EPD_VERSION="{epd_version}"
+OPERATION_MODE="{operation_mode}"
 MANUAL_MODE="{manual_mode}"
 BLUETOOTH_MAC_ADDRESS="{bluetooth_mac}"
 WEBUI_AUTH="{webui_auth}"
@@ -360,6 +367,10 @@ fi
 cd Bjorn
 sed -i 's/"epd_type": "epd2in13_V4"/"epd_type": "'$EPD_VERSION'"/' shared.py || true
 sed -i 's/"manual_mode": True/"manual_mode": '$MANUAL_MODE'/' shared.py || true
+grep -q '"operation_mode":' shared.py && sed -i 's/"operation_mode":[[:space:]]*"[^"]*"/"operation_mode": "'$OPERATION_MODE'"/' shared.py || true
+if [ "$EPD_VERSION" = "epd2in13_V2" ] && grep -q '"screen_reversed":' shared.py; then
+    sed -i '/"screen_reversed":/s/True\|False/False/' shared.py || true
+fi
 
 if [ "$WEBUI_AUTH" = "true" ]; then
     announce_step 8 "Configuring Web UI authentication"

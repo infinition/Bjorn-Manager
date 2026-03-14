@@ -150,9 +150,8 @@ class BJORNWebAPI:
             has_webapp = args[2] if len(args) > 2 else False
             self.js.call("addDevice", label, ip, has_webapp)
         elif event_type == "device_gone":
-            # Keep discovered devices visible across scan cycles.
-            # We intentionally ignore transient "gone" signals here.
-            return
+            ip = args[0]
+            self.js.call("markDeviceOffline", ip)
         elif event_type == "webapp_status":
             ip, status = args
             status_js = "true" if status else "false"
@@ -316,9 +315,14 @@ class BJORNWebAPI:
                         script_remote = self.ssh_worker.upload_install_scripts(assets_dir)
                         self.js.call("logMessage", "Using default installation script", "info")
 
+                    operation_mode = str(config.get("operationMode", "manual")).strip().lower()
+                    if operation_mode not in {"auto", "manual", "ai"}:
+                        operation_mode = "manual"
+
                     params = {
                         "epd_choice": config.get("epdChoice", 4),
-                        "manual_mode": config.get("operationMode") == "manual",
+                        "operation_mode": operation_mode,
+                        "manual_mode": operation_mode == "manual",
                         "webui_enable_auth": config.get("enableWebAuth", False),
                         "webui_password": config.get("webPassword", ""),
                         "bt_mac": config.get("bluetoothMac", "60:57:C8:47:E3:88"),
@@ -692,7 +696,7 @@ def main():
         title=APP_TITLE,
         width=1400,
         height=1200,
-        min_size=(1000, 700),
+        min_size=(820, 620),
         js_api=api,
         resizable=True,
         on_top=False,

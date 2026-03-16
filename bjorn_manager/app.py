@@ -14,6 +14,9 @@ import pathlib
 import tempfile
 import base64
 import logging
+import subprocess
+import urllib.request
+import urllib.error
 
 import webview
 
@@ -30,6 +33,8 @@ APP_TITLE = "BJORN CyberViking — Installation Manager"
 DEFAULT_USER = "bjorn"
 DEFAULT_PORT = 22
 EXTERNAL_HTML_FILENAME = "bjorn_ui.html"
+BRANCH_REPO_URL = "https://github.com/infinition/Bjorn.git"
+BRANCH_API_URL = "https://api.github.com/repos/infinition/Bjorn/branches?per_page=100"
 
 INSTALL_SH_FALLBACK = """#!/usr/bin/env bash
 echo -e "\\033[0;34m[INFO] Placeholder install_bjorn.sh (replace with real script).\\033[0m"
@@ -55,6 +60,9 @@ class BJORNWebAPI:
         self._connected = False
         self._connected_ip: str | None = None
         self._installation_mode = False
+        self._connect_in_progress = False
+        self._install_session: dict | None = None
+        self._install_monitor_thread: threading.Thread | None = None
         self._log_stream_thread: threading.Thread | None = None
         self._log_stream_stop = threading.Event()
         self._custom_script_path: str | None = None
@@ -136,6 +144,94 @@ class BJORNWebAPI:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def get_git_branches(self):
+        def _normalize(branches: list[str]) -> list[str]:
+            filtered = []
+            seen = set()
+            for branch in branches:
+                name = (branch or "").strip()
+                if not name or name.startswith("dependabot/") or name in seen:
+                    continue
+                seen.add(name)
+                filtered.append(name)
+
+            preferred = ["main", "dev"]
+            ordered = [name for name in preferred if name in seen]
+            ordered.extend(sorted([name for name in filtered if name not in preferred], key=str.lower))
+            return ordered or preferred
+
+        try:
+            branches: list[str] = []
+            api_error = None
+
+            try:
+                req = urllib.request.Request(
+                    BRANCH_API_URL,
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": "BJORN-Manager",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=15) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if isinstance(payload, list):
+                    branches = [item.get("name", "") for item in payload if isinstance(item, dict)]
+            except Exception as exc:
+                api_error = exc
+
+            if not branches:
+                try:
+                    proc = subprocess.run(
+                        ["git", "ls-remote", "--heads", BRANCH_REPO_URL],
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                        check=True,
+                    )
+                    for line in proc.stdout.splitlines():
+                        parts = line.strip().split()
+                        if len(parts) != 2:
+                            continue
+                        ref = parts[1]
+                        if ref.startswith("refs/heads/"):
+                            branches.append(ref.split("refs/heads/", 1)[1])
+                except Exception as exc:
+                    details = str(api_error or exc or "Unable to fetch branches")
+                    return {"success": False, "error": details}
+
+            ordered = _normalize(branches)
+            return {"success": True, "branches": ordered}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def delete_bjorn_folder(self):
+        try:
+            if not self.ssh_worker or not self.ssh_worker._connected:
+                return {"success": False, "error": "Not connected to SSH"}
+            if self._install_session and not self._install_session.get("finished"):
+                return {"success": False, "error": "Installation is still running"}
+
+            success = self.ssh_worker.delete_remote_path("/home/bjorn/Bjorn", recursive=True)
+            if not success:
+                return {"success": False, "error": "Failed to delete /home/bjorn/Bjorn"}
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def delete_install_script(self):
+        try:
+            if not self.ssh_worker or not self.ssh_worker._connected:
+                return {"success": False, "error": "Not connected to SSH"}
+            if self._install_session and not self._install_session.get("finished"):
+                return {"success": False, "error": "Installation is still running"}
+
+            success = self.ssh_worker.delete_remote_path("/home/bjorn/install_bjorn.sh", recursive=False)
+            if not success:
+                return {"success": False, "error": "Failed to delete /home/bjorn/install_bjorn.sh"}
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     # ── Internal callback from SSHWorker / Discovery → JS ────────────────
 
     def _api_callback(self, event_type: str, *args):
@@ -187,6 +283,9 @@ class BJORNWebAPI:
 
     def connect_ssh(self, config):
         try:
+            if self._connect_in_progress:
+                return {"success": False, "error": "SSH connection already in progress"}
+            self._connect_in_progress = True
             if self.ssh_worker:
                 self.ssh_worker.close()
 
@@ -209,16 +308,24 @@ class BJORNWebAPI:
                         if self.discovery:
                             self.discovery.stop()
                         self.js.call("setConnectionStatus", True, config["host"])
+                        if self._install_session and not self._install_session.get("finished"):
+                            self._installation_mode = True
+                            self.js.call("setInstallationMode", True)
+                            self.js.call("logMessage", "Resuming remote installation log stream...", "warning")
+                            self._start_install_monitor(False)
                     else:
                         self._connected = False
                         self.js.call("setConnectionStatus", False, "")
                 except Exception as e:
                     self.js.call("logMessage", f"Connection error: {e}", "error")
                     self.js.call("setConnectionStatus", False, "")
+                finally:
+                    self._connect_in_progress = False
 
             threading.Thread(target=connect_thread, daemon=True).start()
             return {"success": True}
         except Exception as e:
+            self._connect_in_progress = False
             return {"success": False, "error": str(e)}
 
     def disconnect_ssh(self):
@@ -237,9 +344,15 @@ class BJORNWebAPI:
                     pass
             self._connected = False
             self._connected_ip = None
-            self._installation_mode = False
+            self._connect_in_progress = False
             self.js.call("setConnectionStatus", False, "")
-            self.js.call("setInstallationMode", False)
+            if self._install_session and not self._install_session.get("finished"):
+                self._installation_mode = True
+                self.js.call("setInstallationMode", True)
+                self.js.call("logMessage", "Remote installation is still active. Reconnect to resume live logs.", "warning")
+            else:
+                self._installation_mode = False
+                self.js.call("setInstallationMode", False)
 
             # Reset discovery instead of destroy+recreate
             if self.discovery:
@@ -298,6 +411,8 @@ class BJORNWebAPI:
         try:
             if not self.ssh_worker or not self.ssh_worker._connected:
                 return {"success": False, "error": "Not connected to SSH"}
+            if self._installation_mode:
+                return {"success": False, "error": "Installation already in progress"}
             self._installation_mode = True
             self.js.call("setInstallationMode", True)
 
@@ -332,11 +447,8 @@ class BJORNWebAPI:
                     if config.get("customScriptDesc"):
                         self.js.call("logMessage", f'Script desc: {config["customScriptDesc"]}', "info")
 
-                    success = self.ssh_worker.run_install(script_remote, params, False)
-                    if success:
-                        self.js.call("logMessage", "BJORN installation completed successfully!", "success")
-                    else:
-                        self.js.call("logMessage", "BJORN installation failed", "error")
+                    self._install_session = self.ssh_worker.start_install(script_remote, params)
+                    self._start_install_monitor(False)
 
                     if config.get("useCustomScript") and self._custom_script_path:
                         try:
@@ -344,14 +456,83 @@ class BJORNWebAPI:
                             self._custom_script_path = None
                         except Exception:
                             pass
-                    self._installation_mode = False
-                    self.js.call("setInstallationMode", False)
                 except Exception as e:
                     self.js.call("logMessage", f"Installation error: {e}", "error")
                     self._installation_mode = False
+                    self._install_session = None
                     self.js.call("setInstallationMode", False)
 
             threading.Thread(target=install_thread, daemon=True).start()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def _start_install_monitor(self, reboot_after: bool = False) -> None:
+        if not self._install_session or not self.ssh_worker:
+            return
+        if self._install_monitor_thread and self._install_monitor_thread.is_alive():
+            return
+
+        session = self._install_session
+
+        def monitor_thread():
+            try:
+                result = self.ssh_worker.monitor_install(session, reboot_after=reboot_after)
+                if result is None:
+                    self.js.call(
+                        "logMessage",
+                        "Installation is still running on the target. Reconnect to resume the live log stream.",
+                        "warning",
+                    )
+                    return
+
+                if result:
+                    self.js.call("logMessage", "BJORN installation completed successfully!", "success")
+                else:
+                    self.js.call("logMessage", "BJORN installation failed", "error")
+
+                self._install_session = None
+                self._installation_mode = False
+                self.js.call("setInstallationMode", False)
+            except Exception as e:
+                self.js.call("logMessage", f"Installation monitor error: {e}", "error")
+
+        self._install_monitor_thread = threading.Thread(target=monitor_thread, daemon=True)
+        self._install_monitor_thread.start()
+
+    def resume_install_logs(self):
+        try:
+            if not self.ssh_worker or not self.ssh_worker._connected:
+                return {"success": False, "error": "Not connected to SSH"}
+            if not self._install_session:
+                return {"success": False, "error": "No remote installation session to resume"}
+            if self._install_session.get("finished"):
+                return {"success": False, "error": "Installation session is already finished"}
+
+            self._installation_mode = True
+            self.js.call("setInstallationMode", True)
+            self._start_install_monitor(False)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def stop_install(self):
+        try:
+            if not self.ssh_worker or not self.ssh_worker._connected:
+                return {"success": False, "error": "Not connected to SSH"}
+            if not self._install_session:
+                return {"success": False, "error": "No remote installation session is active"}
+
+            success = self.ssh_worker.stop_install(self._install_session)
+            if not success:
+                return {"success": False, "error": "Failed to stop remote installation"}
+
+            self._install_session["finished"] = True
+            self._install_session["result"] = False
+            self._install_session = None
+            self._installation_mode = False
+            self.js.call("setInstallationMode", False)
+            self.js.call("logMessage", "Remote installation stopped", "warning")
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}

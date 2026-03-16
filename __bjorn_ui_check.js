@@ -7,6 +7,7 @@
             devices: new Map(),
             currentProgress: 0,
             maxProgress: 100,
+            installing: false,
     
             slotMode: 'main',
             menuStack: [],
@@ -39,6 +40,8 @@
                 disconnect: 'Disconnect',
                 upload_files: 'Upload Files',
                 install_bjorn: 'Install BJORN',
+                resume_install: 'Resume Install',
+                stop_install: 'Stop Install',
                 restart_bjorn: 'Restart BJORN',
                 reboot_target: 'Reboot Target',
                 more_actions: 'More Actions',
@@ -72,6 +75,8 @@
                 status_no_file_upload: 'No file selected for upload',
                 status_upload_failed: 'Upload failed: {error}',
                 status_install_failed: 'Installation failed: {error}',
+                status_resume_install_failed: 'Resume install failed: {error}',
+                status_stop_install_failed: 'Stop install failed: {error}',
                 status_restart_failed: 'BJORN restart failed: {error}',
                 status_reboot_failed: 'Reboot failed: {error}',
                 status_custom_upload_failed: 'Custom script upload failed: {error}',
@@ -112,6 +117,18 @@
         };
         Object.keys(I18N_FIX).forEach((lang) => {
             I18N[lang] = { ...(I18N[lang] || {}), ...I18N_FIX[lang] };
+        });
+        const INSTALL_ACTION_I18N = {
+            en: { resume_install: "Resume Install", stop_install: "Stop Install", status_resume_install_failed: "Resume install failed: {error}", status_stop_install_failed: "Stop install failed: {error}" },
+            fr: { resume_install: "Reprendre install", stop_install: "Stop install", status_resume_install_failed: "Echec reprise install : {error}", status_stop_install_failed: "Echec arret install : {error}" },
+            it: { resume_install: "Riprendi install", stop_install: "Stop install", status_resume_install_failed: "Ripresa install fallita: {error}", status_stop_install_failed: "Stop install fallito: {error}" },
+            es: { resume_install: "Reanudar install", stop_install: "Stop install", status_resume_install_failed: "Fallo al reanudar install: {error}", status_stop_install_failed: "Fallo al detener install: {error}" },
+            de: { resume_install: "Install fortsetzen", stop_install: "Install stoppen", status_resume_install_failed: "Install-Fortsetzung fehlgeschlagen: {error}", status_stop_install_failed: "Install-Stopp fehlgeschlagen: {error}" },
+            zh: { resume_install: "恢复安装", stop_install: "停止安装", status_resume_install_failed: "恢复安装失败: {error}", status_stop_install_failed: "停止安装失败: {error}" },
+            ru: { resume_install: "Возобновить install", stop_install: "Остановить install", status_resume_install_failed: "Ошибка возобновления install: {error}", status_stop_install_failed: "Ошибка остановки install: {error}" }
+        };
+        Object.keys(INSTALL_ACTION_I18N).forEach((lang) => {
+            I18N[lang] = { ...(I18N[lang] || {}), ...INSTALL_ACTION_I18N[lang] };
         });
         let currentLang = 'en';
         const UI_LABELS = {
@@ -204,6 +221,8 @@
             setText('#connectBtn', UIState.connected ? t('disconnect') : t('connect'));
             setText('#uploadBtn', t('upload_files'));
             setText('#installBtn', t('install_bjorn'));
+            setText('#resumeInstallBtn', t('resume_install'));
+            setText('#stopInstallBtn', t('stop_install'));
             setText('#restartBtn', t('restart_bjorn'));
             setText('#rebootBtn', t('reboot_target'));
             setText('#moreActionsBtn', t('more_actions'));
@@ -433,6 +452,8 @@
             connectBtn: document.getElementById('connectBtn'),
             uploadBtn: document.getElementById('uploadBtn'),
             installBtn: document.getElementById('installBtn'),
+            resumeInstallBtn: document.getElementById('resumeInstallBtn'),
+            stopInstallBtn: document.getElementById('stopInstallBtn'),
             restartBtn: document.getElementById('restartBtn'),
             rebootBtn: document.getElementById('rebootBtn'),
             
@@ -466,6 +487,7 @@
             elements.restartBtn.disabled = true;
             elements.rebootBtn.disabled = true;
             elements.uploadBtn.disabled = true;
+            refreshInstallActionButtons();
             
             if (window.pywebview && window.pywebview.api) {
                 window.pywebview.api.start_discovery();
@@ -982,6 +1004,8 @@ function populateAdvancedOptionsDemo() {
             elements.connectBtn.addEventListener('click', handleConnect);
             elements.uploadBtn.addEventListener('click', handleUpload);
             elements.installBtn.addEventListener('click', handleInstall);
+            elements.resumeInstallBtn.addEventListener('click', handleResumeInstall);
+            elements.stopInstallBtn.addEventListener('click', handleStopInstall);
             elements.restartBtn.addEventListener('click', handleRestartBjorn);
             elements.rebootBtn.addEventListener('click', handleReboot);
             
@@ -1061,6 +1085,19 @@ function populateAdvancedOptionsDemo() {
             elements.installBtn.disabled = !connected;
             elements.restartBtn.disabled = !connected;
             elements.rebootBtn.disabled = !connected;
+            refreshInstallActionButtons();
+        }
+
+        function refreshInstallActionButtons() {
+            const connected = UIState.connected;
+            const installing = UIState.installing;
+
+            elements.resumeInstallBtn.classList.toggle('hidden', !connected);
+            elements.stopInstallBtn.classList.toggle('hidden', !connected);
+
+            elements.installBtn.disabled = !connected || installing;
+            elements.resumeInstallBtn.disabled = !connected || installing;
+            elements.stopInstallBtn.disabled = !connected || !installing;
         }
     
         // ======== CYLINDER MENU ========
@@ -1413,6 +1450,7 @@ function populateAdvancedOptionsDemo() {
         }
     
         function setInstallationMode(installing) {
+            UIState.installing = !!installing;
             elements.progressSection.classList.toggle('hidden', !installing);
             
             // Show/hide terminal and adjust layout based on installation mode
@@ -1427,6 +1465,7 @@ function populateAdvancedOptionsDemo() {
                 logMessage(t('status_install_mode_off'), 'info');
                 updateProgress(0, 100, t('idle'));
             }
+            refreshInstallActionButtons();
         }
         
         function updateDeviceConnectionStatus(ip, connected) {
@@ -1710,6 +1749,24 @@ function populateAdvancedOptionsDemo() {
             }
         }
     
+        async function handleResumeInstall() {
+            if (window.pywebview && window.pywebview.api) {
+                const result = await window.pywebview.api.resume_install_logs();
+                if (!result.success) {
+                    logMessage(t('status_resume_install_failed', { error: result.error }), 'error');
+                }
+            }
+        }
+
+        async function handleStopInstall() {
+            if (window.pywebview && window.pywebview.api) {
+                const result = await window.pywebview.api.stop_install();
+                if (!result.success) {
+                    logMessage(t('status_stop_install_failed', { error: result.error }), 'error');
+                }
+            }
+        }
+
         async function handleRestartBjorn() {
             if (window.pywebview && window.pywebview.api) {
                 const result = await window.pywebview.api.restart_bjorn();

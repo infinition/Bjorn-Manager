@@ -63,6 +63,15 @@ def _upload_text_lf(sftp: paramiko.SFTPClient, local_path: str, remote_path: str
     sftp.putfo(io.BytesIO(content.encode("utf-8")), remote_path)
 
 
+def _upload_remote_text(
+    sftp: paramiko.SFTPClient,
+    remote_path: str,
+    content: str,
+) -> None:
+    payload = content.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    sftp.putfo(io.BytesIO(payload), remote_path)
+
+
 class SSHWorker:
     def __init__(self, config: SSHConfig, callback: Callable[..., None]) -> None:
         self._config = config
@@ -282,15 +291,13 @@ class SSHWorker:
         finally:
             sftp.close()
 
-    def run_install(
+    def start_install(
         self,
         script_path_remote: str,
         params: dict,
-        reboot_after: bool = False,
-    ) -> bool:
-        """Run the installation script in non-interactive mode using env vars."""
+    ) -> dict:
+        """Start the installation script in the background and return session info."""
         try:
-            client = self._ensure_connected()
             password = self._config.sudo_password or self._config.password or ""
 
             # Map EPD choice number to version string
@@ -333,62 +340,227 @@ class SSHWorker:
 
             safe_script = shlex.quote(script_path_remote)
             safe_flag = shlex.quote(install_mode_flag)
-            command = f"sudo -S {env_str} bash {safe_script} {safe_flag}"
+            session_id = f"bjorn_install_{int(time.time())}"
+            remote_runner = f"/home/{self._config.user}/.{session_id}.sh"
+            remote_stream_log = f"/tmp/{session_id}.stream.log"
+            remote_status_file = f"/tmp/{session_id}.status"
+
+            runner_content = f"""#!/bin/bash
+set +e
+rm -f {shlex.quote(remote_stream_log)} {shlex.quote(remote_status_file)}
+env {env_str} bash {safe_script} {safe_flag} > {shlex.quote(remote_stream_log)} 2>&1
+rc=$?
+printf '%s\\n' "$rc" > {shlex.quote(remote_status_file)}
+exit 0
+"""
+
+            client = self._ensure_connected()
+            sftp = client.open_sftp()
+            try:
+                _upload_remote_text(sftp, remote_runner, runner_content)
+            finally:
+                sftp.close()
+
+            self.exec_simple(f"chmod +x {shlex.quote(remote_runner)}", timeout=10)
 
             self.log(f"[RUN] Starting installation (branch={git_branch}, mode={install_mode}, operation={operation_mode})")
+            self.log(f"[RUN] Remote stream log: {remote_stream_log}", "info")
 
-            chan = client.get_transport().open_session()
-            chan.get_pty()
-            chan.exec_command(command)
+            start_command = (
+                "sudo -S -p '' sh -lc "
+                + shlex.quote(
+                    f"nohup bash {shlex.quote(remote_runner)} >/dev/null 2>&1 & echo $!"
+                )
+            )
+            exit_code, out, err = self.exec_simple(
+                start_command,
+                input_data=password + "\n",
+                timeout=30,
+            )
+            if exit_code != 0:
+                self.log(f"[RUN] Failed to start remote installer: {err or out}", "error")
+                return False
 
-            # Send sudo password when prompted
-            pw_sent = False
-            buff = b""
+            if password:
+                self.log("[SUDO] Password sent", "info")
 
-            while True:
-                if chan.recv_ready():
-                    data = chan.recv(4096)
-                    buff += data
-                    text = data.decode("utf-8", errors="ignore")
-                    for line in text.splitlines():
-                        if line.strip():
-                            self.log(line, "info")
-                            m = STEP_PATTERN.search(line)
-                            if m:
-                                self.update_progress(
-                                    int(m.group(1)), int(m.group(2)),
-                                    f"Step {m.group(1)}/{m.group(2)}"
-                                )
+            remote_pid = out.strip() or "unknown"
+            self.log(f"[RUN] Remote installer started (pid={remote_pid})", "info")
+            return {
+                "id": session_id,
+                "remote_pid": remote_pid,
+                "remote_runner": remote_runner,
+                "remote_stream_log": remote_stream_log,
+                "remote_status_file": remote_status_file,
+                "next_line": 1,
+                "finished": False,
+                "result": None,
+            }
+        except Exception as exc:
+            self.log(f"Error during installation startup: {exc}", "error")
+            raise
 
-                if not pw_sent:
-                    lower_buff = buff.lower()
-                    if b"[sudo]" in lower_buff or b"password for" in lower_buff:
-                        chan.send(password + "\n")
-                        pw_sent = True
-                        buff = b""
-                        self.log("[SUDO] Password sent", "info")
+    def monitor_install(
+        self,
+        session: dict,
+        reboot_after: bool = False,
+    ) -> Optional[bool]:
+        """Monitor an already-started remote installation session.
 
-                if chan.exit_status_ready():
-                    # Drain remaining output
-                    while chan.recv_ready():
-                        data = chan.recv(4096)
-                        text = data.decode("utf-8", errors="ignore")
-                        for line in text.splitlines():
-                            if line.strip():
-                                self.log(line, "info")
-                    rc = chan.recv_exit_status()
+        Returns:
+            True if the installer completed successfully,
+            False if it completed with a non-zero exit code,
+            None if monitoring was interrupted before the final result was known.
+        """
+        reconnect_attempts = 0
+        next_line = int(session.get("next_line", 1) or 1)
+        remote_runner = str(session["remote_runner"])
+        remote_stream_log = str(session["remote_stream_log"])
+        remote_status_file = str(session["remote_status_file"])
+
+        while True:
+            try:
+                reconnect_attempts = 0
+
+                log_command = (
+                    f"sed -n '{next_line},$p' {shlex.quote(remote_stream_log)} 2>/dev/null || true"
+                )
+                _, log_out, _ = self.exec_simple(log_command, timeout=20)
+                all_lines = log_out.splitlines()
+                for line in all_lines:
+                    if not line.strip():
+                        continue
+                    self.log(line, "info")
+                    m = STEP_PATTERN.search(line)
+                    if m:
+                        self.update_progress(
+                            int(m.group(1)), int(m.group(2)),
+                            f"Step {m.group(1)}/{m.group(2)}"
+                        )
+                next_line += len(all_lines)
+                session["next_line"] = next_line
+
+                _, status_out, _ = self.exec_simple(
+                    f"cat {shlex.quote(remote_status_file)} 2>/dev/null || true",
+                    timeout=20,
+                )
+                status_text = status_out.strip()
+                if status_text:
+                    try:
+                        rc = int(status_text.splitlines()[-1].strip())
+                    except ValueError:
+                        rc = 1
+
+                    session["finished"] = True
+                    session["result"] = rc == 0
+
                     if rc == 0:
                         self.log("Installation completed successfully!", "success")
                     else:
                         self.log(f"Installation failed with exit code {rc}", "error")
 
+                    self.exec_simple(
+                        "rm -f "
+                        + " ".join(
+                            shlex.quote(path)
+                            for path in [remote_runner, remote_stream_log, remote_status_file]
+                        ),
+                        timeout=15,
+                    )
+
                     if reboot_after and rc == 0:
                         self.reboot()
                     return rc == 0
 
-                time.sleep(0.1)
+                time.sleep(1.0)
+            except Exception as exc:
+                reconnect_attempts += 1
+                self.log(
+                    f"[RUN] Lost SSH connection while monitoring install ({exc}); reconnect attempt {reconnect_attempts}/5",
+                    "warning",
+                )
+                self.close()
+                if reconnect_attempts > 5 or not self.connect():
+                    self.log("[RUN] Unable to reconnect to monitor the remote installer", "error")
+                    session["finished"] = False
+                    session["result"] = None
+                    session["next_line"] = next_line
+                    return None
+                time.sleep(2.0)
+
+    def run_install(
+        self,
+        script_path_remote: str,
+        params: dict,
+        reboot_after: bool = False,
+    ) -> Optional[bool]:
+        session = self.start_install(script_path_remote, params)
+        return self.monitor_install(session, reboot_after=reboot_after)
+
+    def stop_install(self, session: dict) -> bool:
+        """Stop a running remote installation session if possible."""
+        try:
+            password = self._config.sudo_password or self._config.password or ""
+            remote_pid = str(session.get("remote_pid", "") or "").strip()
+            remote_runner = str(session.get("remote_runner", "") or "").strip()
+            remote_stream_log = str(session.get("remote_stream_log", "") or "").strip()
+            remote_status_file = str(session.get("remote_status_file", "") or "").strip()
+
+            if not remote_pid or remote_pid == "unknown":
+                self.log("[RUN] No remote PID is available for this install session", "warning")
+                return False
+
+            stop_script = (
+                "sh -lc "
+                + shlex.quote(
+                    " ; ".join(
+                        [
+                            f"pkill -TERM -P {shlex.quote(remote_pid)} 2>/dev/null || true",
+                            f"kill -TERM {shlex.quote(remote_pid)} 2>/dev/null || true",
+                            "sleep 2",
+                            f"pkill -KILL -P {shlex.quote(remote_pid)} 2>/dev/null || true",
+                            f"kill -KILL {shlex.quote(remote_pid)} 2>/dev/null || true",
+                            f"printf '%s\\n' 130 > {shlex.quote(remote_status_file)}",
+                            "exit 0",
+                        ]
+                    )
+                )
+            )
+            exit_code, out, err = self.exec_simple(
+                f"sudo -S -p '' {stop_script}",
+                input_data=password + "\n",
+                timeout=30,
+            )
+            if exit_code != 0:
+                self.log(f"[RUN] Failed to stop remote installer: {err or out}", "error")
+                return False
+
+            cleanup_targets = [p for p in [remote_runner, remote_stream_log] if p]
+            if cleanup_targets:
+                self.exec_simple(
+                    "rm -f " + " ".join(shlex.quote(path) for path in cleanup_targets),
+                    timeout=15,
+                )
+
+            self.log("[RUN] Remote installation stop requested", "warning")
+            return True
         except Exception as exc:
-            self.log(f"Error during installation: {exc}", "error")
+            self.log(f"[RUN] Failed to stop remote installer: {exc}", "error")
+            return False
+
+    def delete_remote_path(self, remote_path: str, recursive: bool = False) -> bool:
+        try:
+            safe_path = shlex.quote(remote_path)
+            rm_flag = "-rf" if recursive else "-f"
+            self.log(f"[REMOTE] Deleting {remote_path}...", "warning")
+            exit_code, out, err = self._sudo_exec(f"rm {rm_flag} {safe_path}", timeout=30)
+            if exit_code != 0:
+                self.log(f"[REMOTE] Delete failed for {remote_path}: {err or out}", "error")
+                return False
+            self.log(f"[REMOTE] Deleted {remote_path}", "success")
+            return True
+        except Exception as exc:
+            self.log(f"[REMOTE] Delete failed for {remote_path}: {exc}", "error")
             return False
 
     def restart_bjorn_service(self) -> bool:

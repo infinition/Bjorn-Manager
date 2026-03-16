@@ -78,78 +78,123 @@ function bjorn() {
         tail)       sudo tail -f /home/bjorn/Bjorn/data/logs/* ;;
         bt|bluetooth) sudo /home/bjorn/.scripts_bjorn/bjorn_bluetooth.sh ;;
         wifi)       sudo /home/bjorn/.scripts_bjorn/bjorn_wifi.sh ;;
-        patch-wifi)
-            MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)
-            ARCH_NOW=$(dpkg --print-architecture 2>/dev/null || uname -m)
-            CACHE_DIR="/home/bjorn/.settings_bjorn/monitor_mode_patch"
-            TEMP_REPO="/tmp/infinition_repo_temp_patch"
-            FIRMWARE_SRC=""
-            DEFAULT_ROUTE_IFACE=$(ip route show default 2>/dev/null | awk '/default/ {print $5; exit}')
-
-            echo -e "\n=== Wi-Fi Monitor Mode Patch Repair ==="
-            echo "Detected board: ${MODEL:-unknown}"
-            echo "Detected arch:  ${ARCH_NOW:-unknown}"
-
-            if [[ "$MODEL" != *"Zero 2"* && "$MODEL" != *"Pi 3"* ]]; then
-                echo "This patch is only intended for Raspberry Pi Zero 2 W and Pi 3 boards."
-                return 0
-            fi
-
-            if [[ "$ARCH_NOW" == "arm64" ]]; then
-                echo "Warning: 64-bit OS detected. The firmware patch can be reapplied,"
-                echo "but monitor mode may still remain limited depending on the kernel/userspace stack."
-            fi
-
-            if [ -d "$CACHE_DIR/brcm" ] || [ -d "$CACHE_DIR/cypress" ]; then
-                FIRMWARE_SRC="$CACHE_DIR"
-                echo "Using cached firmware patch from $CACHE_DIR"
-            else
-                echo "No cached firmware patch found. Downloading from GitHub..."
-                rm -rf "$TEMP_REPO"
-                if git clone --depth 1 https://github.com/infinition/infinition.git "$TEMP_REPO"; then
-                    FIRMWARE_SRC="$TEMP_REPO/fixes/bjorn/monitor"
-                    if [ ! -d "$FIRMWARE_SRC" ]; then
-                        echo "Firmware patch directory not found in downloaded repository: $FIRMWARE_SRC"
-                        rm -rf "$TEMP_REPO"
-                        return 1
+        mon)
+            case "$2" in
+                on)
+                    echo -e "\n=== Wi-Fi Monitor Mode ==="
+                    echo "Switching to monitor mode (patched firmware)..."
+                    echo "RNDIS and Bluetooth are NOT affected."
+                    sudo /usr/local/bin/bjorn-monitor-mode on
+                    ;;
+                off)
+                    echo -e "\n=== Wi-Fi Managed Mode ==="
+                    echo "Restoring stock firmware and reconnecting WiFi..."
+                    sudo /usr/local/bin/bjorn-monitor-mode off
+                    ;;
+                status)
+                    echo -e "\n=== Wi-Fi Monitor Mode Status ==="
+                    /usr/local/bin/bjorn-monitor-mode status
+                    ;;
+                *)
+                    echo "Usage: bjorn mon {on|off|status}"
+                    echo ""
+                    echo "  on      Switch WiFi to monitor mode (patched firmware)"
+                    echo "  off     Switch WiFi to managed mode (stock firmware, reconnect)"
+                    echo "  status  Show current WiFi mode"
+                    echo ""
+                    echo "RNDIS (USB) and Bluetooth are never affected by mode switching."
+                    ;;
+            esac
+            ;;
+        open-wifi)
+            case "$2" in
+                status)
+                    echo -e "\n=== BJORN Auto Open Wi-Fi Status ==="
+                    if [ -f /etc/bjorn/open-wifi.conf ]; then
+                        . /etc/bjorn/open-wifi.conf
+                        echo "  Enabled:       ${ENABLED:-1}"
+                        echo "  Mode:          ${MODE:-scan}"
+                        echo "  Min signal:    ${MIN_SIGNAL:-20}%"
+                        echo "  Scan interval: ${SCAN_INTERVAL:-60}s"
+                        echo "  Blacklist:     ${BLACKLIST:-(none)}"
+                    else
+                        echo "  Config not found at /etc/bjorn/open-wifi.conf"
                     fi
-                    mkdir -p "$CACHE_DIR"
-                    rm -rf "$CACHE_DIR/brcm" "$CACHE_DIR/cypress"
-                    if [ -d "$FIRMWARE_SRC/brcm" ]; then cp -rf "$FIRMWARE_SRC/brcm" "$CACHE_DIR/"; fi
-                    if [ -d "$FIRMWARE_SRC/cypress" ]; then cp -rf "$FIRMWARE_SRC/cypress" "$CACHE_DIR/"; fi
-                    chown -R bjorn:bjorn "$CACHE_DIR" 2>/dev/null || true
-                    echo "Cached firmware patch in $CACHE_DIR"
-                else
-                    echo "Failed to download firmware patch from GitHub."
-                    return 1
-                fi
-            fi
-
-            echo "Reapplying firmware patch to /lib/firmware..."
-            if [ -d "$FIRMWARE_SRC/brcm" ]; then
-                sudo cp -rf "$FIRMWARE_SRC/brcm/"* /lib/firmware/brcm/ 2>/dev/null
-            fi
-            if [ -d "$FIRMWARE_SRC/cypress" ]; then
-                sudo cp -rf "$FIRMWARE_SRC/cypress/"* /lib/firmware/cypress/ 2>/dev/null
-            fi
-
-            echo "Holding firmware-related packages..."
-            if ! sudo apt-mark hold firmware-brcm80211 raspberrypi-kernel raspberrypi-bootloader; then
-                echo "Warning: failed to hold one or more firmware/kernel packages."
-            fi
-
-            if [[ "$DEFAULT_ROUTE_IFACE" == wl* ]]; then
-                echo "Skipping live brcmfmac reload to avoid dropping the current Wi-Fi session on $DEFAULT_ROUTE_IFACE."
-                echo "Reboot the device to activate the patched firmware safely."
-            else
-                echo "Reloading brcmfmac module..."
-                sudo rmmod brcmfmac_wcc 2>/dev/null || true
-                sudo modprobe -r brcmfmac 2>/dev/null || true
-                sudo modprobe brcmfmac 2>/dev/null || true
-            fi
-
-            rm -rf "$TEMP_REPO"
-            echo "Wi-Fi monitor mode patch reapplied."
+                    echo ""
+                    if [ "${MODE:-scan}" = "scan" ]; then
+                        echo -n "  Timer: "; systemctl is-active bjorn-open-wifi.timer 2>/dev/null || echo "unknown"
+                    else
+                        echo "  Mode: dispatcher (NM event-driven)"
+                    fi
+                    echo ""
+                    echo "  Current Wi-Fi:"
+                    nmcli -t -f DEVICE,STATE,CONNECTION device status 2>/dev/null | grep '^wlan' | while IFS=: read -r dev state conn; do
+                        echo "    $dev: $state ${conn:+($conn)}"
+                    done
+                    echo ""
+                    ;;
+                enable)
+                    sudo sed -i 's/^ENABLED=.*/ENABLED=1/' /etc/bjorn/open-wifi.conf 2>/dev/null
+                    . /etc/bjorn/open-wifi.conf 2>/dev/null
+                    if [ "${MODE:-scan}" = "scan" ]; then
+                        sudo systemctl enable --now bjorn-open-wifi.timer 2>/dev/null
+                    fi
+                    echo "Auto open Wi-Fi enabled."
+                    ;;
+                disable)
+                    sudo sed -i 's/^ENABLED=.*/ENABLED=0/' /etc/bjorn/open-wifi.conf 2>/dev/null
+                    sudo systemctl disable --now bjorn-open-wifi.timer 2>/dev/null
+                    echo "Auto open Wi-Fi disabled."
+                    ;;
+                scan)
+                    echo "Triggering manual open Wi-Fi scan..."
+                    sudo /usr/local/bin/bjorn-open-wifi
+                    echo "Done. Check 'bjorn open-wifi status' or 'journalctl -t bjorn-open-wifi'."
+                    ;;
+                mode)
+                    case "$3" in
+                        scan)
+                            sudo sed -i 's/^MODE=.*/MODE=scan/' /etc/bjorn/open-wifi.conf 2>/dev/null
+                            sudo systemctl enable --now bjorn-open-wifi.timer 2>/dev/null
+                            echo "Switched to scan mode (timer-based)."
+                            ;;
+                        dispatcher)
+                            sudo sed -i 's/^MODE=.*/MODE=dispatcher/' /etc/bjorn/open-wifi.conf 2>/dev/null
+                            sudo systemctl disable --now bjorn-open-wifi.timer 2>/dev/null
+                            echo "Switched to dispatcher mode (NM event-driven)."
+                            ;;
+                        *)
+                            echo "Usage: bjorn open-wifi mode [scan|dispatcher]"
+                            echo "  scan        Timer-based periodic scan (default)"
+                            echo "  dispatcher  React to NM connectivity-change events"
+                            ;;
+                    esac
+                    ;;
+                blacklist)
+                    if [ -z "$3" ]; then
+                        . /etc/bjorn/open-wifi.conf 2>/dev/null
+                        echo "Current blacklist: ${BLACKLIST:-(empty)}"
+                    else
+                        shift 2
+                        local new_bl="$*"
+                        sudo sed -i "s/^BLACKLIST=.*/BLACKLIST=$new_bl/" /etc/bjorn/open-wifi.conf 2>/dev/null
+                        echo "Blacklist updated to: $new_bl"
+                    fi
+                    ;;
+                logs)
+                    journalctl -t bjorn-open-wifi --no-pager -n 30
+                    ;;
+                *)
+                    echo "Usage: bjorn open-wifi [status|enable|disable|scan|mode|blacklist|logs]"
+                    echo "  status              Show configuration and current state"
+                    echo "  enable              Enable auto-connect to open networks"
+                    echo "  disable             Disable auto-connect"
+                    echo "  scan                Trigger an immediate scan"
+                    echo "  mode [scan|disp.]   Switch between scan/dispatcher mode"
+                    echo "  blacklist [SSIDs]   Show or set blacklisted SSIDs (comma-separated)"
+                    echo "  logs                Show recent open-wifi logs"
+                    ;;
+            esac
             ;;
         usb)        sudo /home/bjorn/.scripts_bjorn/bjorn_usb_gadget.sh ;;
         gadget)
@@ -221,7 +266,17 @@ function bjorn() {
             echo "  tail                Display logs in real-time"
             echo "  bt, bluetooth       Execute the Bluetooth script"
             echo "  wifi                Execute the Wi-Fi script"
-            echo "  patch-wifi          Reapply the cached/downloaded Wi-Fi monitor mode patch"
+            echo "  mon                 WiFi monitor mode switcher"
+            echo "      on              Switch to monitor mode (patched firmware)"
+            echo "      off             Switch to managed mode (stock firmware, reconnect)"
+            echo "      status          Show current WiFi mode"
+            echo "  open-wifi           Manage auto-connect to open Wi-Fi networks"
+            echo "      status          Show open-wifi configuration and state"
+            echo "      enable/disable  Toggle auto-connect on/off"
+            echo "      scan            Trigger an immediate scan"
+            echo "      mode [scan|dispatcher]  Switch operating mode"
+            echo "      blacklist [SSIDs]       Show or set SSID blacklist"
+            echo "      logs            Show recent open-wifi logs"
             echo "  usb                 Execute the USB gadget script"
             echo "  gadget              Manage USB composite gadget (RNDIS + HID)"
             echo "      status          Show gadget status (HID + network)"

@@ -170,6 +170,8 @@ cleanup() {
         for link in configs/c.1/*; do
             [ -L "$link" ] && rm "$link" 2>/dev/null || true
         done
+        [ -L "os_desc/c.1" ] && rm "os_desc/c.1" 2>/dev/null || true
+        [ -d "os_desc" ] && rmdir os_desc 2>/dev/null || true
         [ -d "configs/c.1/strings/0x409" ] && rmdir configs/c.1/strings/0x409 2>/dev/null || true
         [ -d "configs/c.1" ] && rmdir configs/c.1 2>/dev/null || true
         # Remove functions
@@ -220,6 +222,9 @@ echo 0x1d6b > idVendor     # Linux Foundation
 echo 0x0104 > idProduct     # Multifunction Composite Gadget
 echo 0x0100 > bcdDevice
 echo 0x0200 > bcdUSB
+echo 0xEF > bDeviceClass
+echo 0x02 > bDeviceSubClass
+echo 0x01 > bDeviceProtocol
 
 mkdir -p strings/0x409
 echo "fedcba9876543210" > strings/0x409/serialnumber
@@ -232,7 +237,18 @@ echo 250 > configs/c.1/MaxPower
 
 # ── Function 1: RNDIS networking ──────────────────────────────
 mkdir -p functions/rndis.usb0
+echo "02:12:34:56:78:9A" > functions/rndis.usb0/dev_addr
+echo "02:98:76:54:32:10" > functions/rndis.usb0/host_addr
+mkdir -p functions/rndis.usb0/os_desc/interface.rndis
+echo "RNDIS" > functions/rndis.usb0/os_desc/interface.rndis/compatible_id
+echo "5162001" > functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id
 echo "Created RNDIS function"
+
+# Windows needs Microsoft OS descriptors for configfs RNDIS composite gadgets.
+mkdir -p os_desc
+echo 1 > os_desc/use
+echo 0xcd > os_desc/b_vendor_code
+echo "MSFT100" > os_desc/qw_sign
 
 # ── Function 2 & 3: HID keyboard + mouse ─────────────────────
 # Uses python3 to write binary report descriptors (bash can't handle null bytes)
@@ -315,6 +331,8 @@ for func in rndis.usb0 hid.usb0 hid.usb1; do
             echo "WARNING: Failed to link $func (non-fatal)"
     fi
 done
+
+[ -L "os_desc/c.1" ] || ln -s "configs/c.1" "os_desc/" 2>/dev/null || true
 
 # ── Bind UDC ──────────────────────────────────────────────────
 sleep 3
@@ -407,7 +425,19 @@ iface usb0 inet static
     ensure_service_enabled dnsmasq.service "dnsmasq.service" || failed_apt_packages+=("dnsmasq.service enable")
     start_or_restart_service dnsmasq.service "dnsmasq.service" || failed_apt_packages+=("dnsmasq.service start")
     ensure_service_enabled usb-gadget.service "usb-gadget.service" || failed_apt_packages+=("usb-gadget.service enable")
-    start_or_restart_service usb-gadget.service "usb-gadget.service" || failed_apt_packages+=("usb-gadget.service start")
+    if systemctl is-active --quiet usb-gadget.service 2>/dev/null; then
+        if systemctl restart usb-gadget.service >> "$LOG_FILE" 2>&1; then
+            log "SUCCESS" "Restarted usb-gadget.service"
+        else
+            log "WARNING" "usb-gadget.service could not be restarted immediately. A reboot will apply the USB gadget stack cleanly."
+        fi
+    else
+        if systemctl start usb-gadget.service >> "$LOG_FILE" 2>&1; then
+            log "SUCCESS" "Started usb-gadget.service"
+        else
+            log "WARNING" "usb-gadget.service did not start immediately. This is usually expected until after reboot when dwc2/libcomposite boot changes take effect."
+        fi
+    fi
 
     # ── 8. Verify HID devices (informational) ─────────────────
     if [ -c /dev/hidg0 ]; then

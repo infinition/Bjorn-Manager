@@ -8,6 +8,9 @@
 setup_bjorn() {
     log "INFO" "Setting up BJORN..."
     local resolved_operation_mode=""
+    local retryable_pkg=""
+    local requirement_base=""
+    local -a deferred_retry_packages=("RPi.GPIO" "spidev" "netifaces")
 
     # Ensure bjorn user exists
     if ! id -u $BJORN_USER >/dev/null 2>&1; then
@@ -206,20 +209,33 @@ EOF
 
             log "INFO" "Installing Python package: $requirement"
             PIP_ARGS="--prefer-binary --no-build-isolation"
+            requirement_base="${requirement%%[<>=!~ ]*}"
+            retryable_pkg=""
+            if array_contains "$requirement_base" "${deferred_retry_packages[@]}"; then
+                retryable_pkg="$requirement_base"
+            fi
 
             if [ "$INSTALL_MODE" = "local" ] && [ -d "${PACKAGES_PATH}/pip" ]; then
                 if pip_install $PIP_ARGS --no-index --find-links="${PACKAGES_PATH}/pip" "$requirement"; then
                     log "SUCCESS" "Installed Python package: $requirement"
                 else
-                    log "ERROR" "Failed to install Python package: $requirement (local)"
-                    failed_pip_packages+=("$requirement")
+                    if [ -n "$retryable_pkg" ]; then
+                        log "WARNING" "Failed to install pinned Python package: $requirement (local). It will be retried later as '$retryable_pkg' without version pin."
+                    else
+                        log "ERROR" "Failed to install Python package: $requirement (local)"
+                        failed_pip_packages+=("$requirement")
+                    fi
                 fi
             else
                 if pip_install $PIP_ARGS "$requirement"; then
                     log "SUCCESS" "Installed Python package: $requirement"
                 else
-                    log "ERROR" "Failed to install Python package: $requirement"
-                    failed_pip_packages+=("$requirement")
+                    if [ -n "$retryable_pkg" ]; then
+                        log "WARNING" "Failed to install pinned Python package: $requirement. It will be retried later as '$retryable_pkg' without version pin."
+                    else
+                        log "ERROR" "Failed to install Python package: $requirement"
+                        failed_pip_packages+=("$requirement")
+                    fi
                 fi
             fi
         done < requirements.txt
@@ -231,13 +247,19 @@ EOF
 
     # Additional critical pip packages (not always in requirements.txt)
     log "INFO" "Installing additional pip packages..."
-    for extra_pkg in "RPi.GPIO" "netifaces" "paramiko" "scapy" "telnetlib3"; do
+    for extra_pkg in "RPi.GPIO" "spidev" "netifaces" "paramiko" "scapy" "telnetlib3"; do
         log "INFO" "Installing pip package: $extra_pkg"
         if pip_install --prefer-binary "$extra_pkg"; then
             log "SUCCESS" "Installed pip package: $extra_pkg"
+            remove_from_failed_pip_packages "$extra_pkg"
         else
-            log "WARNING" "Failed to install pip package: $extra_pkg (non-fatal)"
-            failed_pip_packages+=("$extra_pkg")
+            if array_contains "$extra_pkg" "${deferred_retry_packages[@]}"; then
+                log "ERROR" "Retry without version pin also failed for Python package: $extra_pkg"
+                failed_pip_packages+=("$extra_pkg")
+            else
+                log "WARNING" "Failed to install pip package: $extra_pkg (non-fatal)"
+                failed_pip_packages+=("$extra_pkg")
+            fi
         fi
     done
 

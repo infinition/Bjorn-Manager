@@ -23,7 +23,7 @@ declare -a failed_pip_packages=()
 BJORN_USER="bjorn"
 BJORN_PATH="/home/${BJORN_USER}/Bjorn"
 CURRENT_STEP=0
-TOTAL_STEPS=14
+TOTAL_STEPS=15
 
 # Logging function
 log() {
@@ -168,6 +168,27 @@ start_or_restart_service() {
     fi
     log "ERROR" "Failed to start $label"
     return 1
+}
+
+array_contains() {
+    local needle="$1"
+    shift
+    local item
+    for item in "$@"; do
+        [ "$item" = "$needle" ] && return 0
+    done
+    return 1
+}
+
+remove_from_failed_pip_packages() {
+    local target="$1"
+    local filtered=()
+    local item=""
+    for item in "${failed_pip_packages[@]}"; do
+        [ "$item" = "$target" ] && continue
+        filtered+=("$item")
+    done
+    failed_pip_packages=("${filtered[@]}")
 }
 
 # Cleanup handler (for temporary extraction directory)

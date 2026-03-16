@@ -7,6 +7,7 @@ apt_get_noninteractive() {
     DEBIAN_FRONTEND=noninteractive \
     APT_LISTCHANGES_FRONTEND=none \
     apt-get \
+        -o Dpkg::Use-Pty=0 \
         -o Dpkg::Options::="--force-confdef" \
         -o Dpkg::Options::="--force-confold" \
         "$@"

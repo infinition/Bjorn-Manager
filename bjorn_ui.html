@@ -873,10 +873,10 @@
         .progress-text { text-align: center; margin-top: 5px; color: var(--neon-orange); font-weight: bold; font-size: 0.8em; }
 
         /* Terminal/Log section */
-        .terminal-container { height: 280px; flex-shrink: 0; position: relative; z-index: 1; }
+        .terminal-container { height: 280px; flex-shrink: 0; position: relative; z-index: 1; -webkit-app-region: no-drag; }
         .terminal-container:not(.connected-mode) { grid-column: 1 / -1; }
         .terminal-container.connected-mode { height: 100%; flex: 1; min-height: 300px; margin-left: 0; margin-top: 0; }
-        .terminal { background: rgba(0, 0, 0, 0.9); border: 2px solid var(--neon-green); border-radius: 8px; padding: 15px; height: calc(100% - 50px); overflow-y: auto; font-family: 'Share Tech Mono', monospace; font-size: 0.85em; line-height: 1.3; position: relative; user-select: text; cursor: text; }
+        .terminal { background: rgba(0, 0, 0, 0.9); border: 2px solid var(--neon-green); border-radius: 8px; padding: 15px; height: calc(100% - 50px); overflow-y: auto; font-family: 'Share Tech Mono', monospace; font-size: 0.85em; line-height: 1.3; position: relative; user-select: text; -webkit-user-select: text; cursor: text; -webkit-app-region: no-drag; }
         .terminal.connected-mode { height: 100%; }
         .terminal::-webkit-scrollbar { width: 14px; }
         .terminal::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.9); border-radius: 7px; border: 2px solid var(--border-color); box-shadow: inset 0 0 10px rgba(0, 255, 65, 0.1); }
@@ -886,7 +886,7 @@
         @keyframes scrollbarGlow { 0% { transform: translateY(-100%); } 100% { transform: translateY(100%); } }
         .terminal { scrollbar-width: thin; scrollbar-color: var(--neon-green) rgba(0, 0, 0, 0.9); }
         .terminal::before { content: '> BJORN_TERMINAL_v2.1.0 — READY'; display: block; color: var(--neon-cyan); margin-bottom: 8px; border-bottom: 1px solid var(--border-color); padding-bottom: 5px; font-weight: bold; }
-        .terminal-line { margin: 1px 0; animation: terminalType 0.1s ease-in; user-select: text; white-space: pre-wrap; word-wrap: break-word; }
+        .terminal-line { margin: 1px 0; animation: terminalType 0.1s ease-in; user-select: text; -webkit-user-select: text; white-space: pre-wrap; word-wrap: break-word; -webkit-app-region: no-drag; }
         @keyframes terminalType { from { opacity: 0; transform: translateX(-5px); } to { opacity: 1; transform: translateX(0); } }
         .terminal-line.info { color: var(--neon-cyan); }
         .terminal-line.success { color: var(--neon-green); }
@@ -1341,6 +1341,7 @@
                                     <select class="cyber-select" id="gitBranch" title="Git Branch" style="flex:1;">
                                         <option value="main" selected>main</option>
                                         <option value="dev">dev</option>
+                                        <option value="__refresh__">(Get Branches)</option>
                                         <option value="__custom__">Custom...</option>
                                     </select>
                                     <input type="text" class="cyber-input hidden" id="gitBranchCustom"
@@ -1692,16 +1693,18 @@
             devices: new Map(),
             currentProgress: 0,
             maxProgress: 100,
+            installing: false,
+            availableGitBranches: ['main', 'dev'],
     
             slotMode: 'main',
             menuStack: [],
             slotIndexByMode: { main: 0, epd: 0 },
             slotOptions: {
-                main: ['stream_logs', 'stop_log_stream', 'change_screen', 'system_info', 'reset_config'],
+                main: ['stream_logs', 'stop_log_stream', 'resume_install', 'stop_install', 'change_screen', 'system_info', 'reset_config', 'delete_bjorn_folder', 'delete_install_script'],
                 epd: ['epd2in13', 'epd2in13_V2', 'epd2in13_V3', 'epd2in13_V4', 'epd2in7']
             },
             slotLabels: {
-                main: ['Stream Logs', 'Stop Logs', 'Change Screen', 'System Info', 'Reset Config'],
+                main: ['Stream Logs', 'Stop Logs', 'Resume Install', 'Stop Install', 'Change Screen', 'System Info', 'Reset Config', 'Delete Bjorn folder', 'Delete install_bjorn.sh'],
                 epd: ['epd2in13', 'epd2in13_V2', 'epd2in13_V3', 'epd2in13_V4', 'epd2in7']
             }
         };
@@ -1724,6 +1727,8 @@
                 disconnect: 'Disconnect',
                 upload_files: 'Upload Files',
                 install_bjorn: 'Install BJORN',
+                resume_install: 'Resume Install',
+                stop_install: 'Stop Install',
                 restart_bjorn: 'Restart BJORN',
                 reboot_target: 'Reboot Target',
                 more_actions: 'More Actions',
@@ -1757,10 +1762,19 @@
                 status_no_file_upload: 'No file selected for upload',
                 status_upload_failed: 'Upload failed: {error}',
                 status_install_failed: 'Installation failed: {error}',
+                status_fetching_branches: 'Fetching remote git branches...',
+                status_git_branches_loaded: 'Loaded {count} git branches',
+                status_git_branches_failed: 'Failed to fetch git branches: {error}',
+                status_resume_install_failed: 'Resume install failed: {error}',
+                status_stop_install_failed: 'Stop install failed: {error}',
+                status_delete_bjorn_failed: 'Delete Bjorn folder failed: {error}',
+                status_delete_install_script_failed: 'Delete install_bjorn.sh failed: {error}',
                 status_restart_failed: 'BJORN restart failed: {error}',
                 status_reboot_failed: 'Reboot failed: {error}',
                 status_custom_upload_failed: 'Custom script upload failed: {error}',
                 confirm_reset: 'Reset all configuration to defaults?',
+                confirm_delete_bjorn_folder: 'Delete /home/bjorn/Bjorn on the remote target?',
+                confirm_delete_install_script: 'Delete /home/bjorn/install_bjorn.sh on the remote target?',
                 snippet_required: 'Name and script are required.'
             },
             fr: { lang_label:'Langue', title_bar:'BJORN CYBERVIKING - Gestionnaire d installation v2.1.0', maximize:'Agrandir', close:'Fermer', disconnected:'DECONNECTE', connected_to:'CONNECTE A {name} {ip}:{port}', detector:'DETECTEUR BJORN', ssh_connection:'CONNEXION SSH', configuration:'CONFIGURATION', command_interface:'INTERFACE DE COMMANDE', operation_status:'STATUT OPERATION', system_log_stream:'FLUX DE LOG SYSTEME', connect:'Connecter', disconnect:'Deconnecter', upload_files:'Envoyer fichiers', install_bjorn:'Installer BJORN', restart_bjorn:'Redemarrer BJORN', reboot_target:'Redemarrer cible', more_actions:'Plus d actions', back:'← RETOUR', idle:'Inactif', no_config_generated:'Aucune configuration generee', loading_config:'Chargement des options...', generate_script:'Generer script', cancel:'Annuler', load_defaults:'Charger defauts', custom_script_select:'Selectionner script custom', local_archive_select:'Selectionner bjorn_packages.tar.gz', debug_bundle_select:'Selectionner Bjorn.zip', status_init:'Systeme initialise - Pret', status_discovery_start:'Demarrage detection reseau...', status_manual_discovery:'Detection manuelle lancee', status_periodic_discovery:'Detection periodique lancee', status_periodic_stopped:'Detection periodique arretee', status_maximize_not_supported:'Agrandissement non supporte', status_selected_target:'Cible selectionnee: {ip}', status_opening_webui:'Ouverture WebUI {ip}:8000', status_install_mode_on:'Mode installation active', status_install_mode_off:'Mode installation desactive', status_reset_config:'Configuration reinitialisee', status_default_loaded:'Configuration par defaut chargee', status_custom_script_mode:'Mode script custom active', status_advanced_mode:'Mode configuration avancee active', status_connecting:'Connexion a {user}@{host}:{port}...', status_disconnecting:'Deconnexion cible...', status_connection_failed:'Echec connexion: {error}', status_no_file_upload:'Aucun fichier selectionne', status_upload_failed:'Echec upload: {error}', status_install_failed:'Echec installation: {error}', status_restart_failed:'Echec redemarrage BJORN: {error}', status_reboot_failed:'Echec reboot: {error}', status_custom_upload_failed:'Echec upload script custom: {error}', confirm_reset:'Reinitialiser toute la configuration?', snippet_required:'Nom et script requis.' },
@@ -1798,6 +1812,18 @@
         Object.keys(I18N_FIX).forEach((lang) => {
             I18N[lang] = { ...(I18N[lang] || {}), ...I18N_FIX[lang] };
         });
+        const INSTALL_ACTION_I18N = {
+            en: { resume_install: "Resume Install", stop_install: "Stop Install", status_resume_install_failed: "Resume install failed: {error}", status_stop_install_failed: "Stop install failed: {error}" },
+            fr: { resume_install: "Reprendre install", stop_install: "Stop install", status_resume_install_failed: "Echec reprise install : {error}", status_stop_install_failed: "Echec arret install : {error}" },
+            it: { resume_install: "Riprendi install", stop_install: "Stop install", status_resume_install_failed: "Ripresa install fallita: {error}", status_stop_install_failed: "Stop install fallito: {error}" },
+            es: { resume_install: "Reanudar install", stop_install: "Stop install", status_resume_install_failed: "Fallo al reanudar install: {error}", status_stop_install_failed: "Fallo al detener install: {error}" },
+            de: { resume_install: "Install fortsetzen", stop_install: "Install stoppen", status_resume_install_failed: "Install-Fortsetzung fehlgeschlagen: {error}", status_stop_install_failed: "Install-Stopp fehlgeschlagen: {error}" },
+            zh: { resume_install: "恢复安装", stop_install: "停止安装", status_resume_install_failed: "恢复安装失败: {error}", status_stop_install_failed: "停止安装失败: {error}" },
+            ru: { resume_install: "Возобновить install", stop_install: "Остановить install", status_resume_install_failed: "Ошибка возобновления install: {error}", status_stop_install_failed: "Ошибка остановки install: {error}" }
+        };
+        Object.keys(INSTALL_ACTION_I18N).forEach((lang) => {
+            I18N[lang] = { ...(I18N[lang] || {}), ...INSTALL_ACTION_I18N[lang] };
+        });
         let currentLang = 'en';
         const UI_LABELS = {
             en: { target_host:'Target Host', port:'Port', username:'Username', password:'Password', private_key:'Private Key Path', use_key:'Use SSH Private Key', browse:'Browse...', install_mode:'Install Mode', git_branch:'Git Branch', local_archive:'Local Archive (.tar.gz)', debug_bundle:'Debug Bundle (Bjorn.zip)', epd:'E-Paper Display Model', operation_mode:'Operation Mode', bluetooth_mac:'Bluetooth MAC Address', web_auth:'Enable Web UI Authentication', web_password:'Web UI Password', custom_mode:'Use Custom Installation Script', custom_script:'Custom Script (.sh)', script_desc:'Script Description (optional)', adv_mode:'Use Advanced Configuration Mode', adv_setup:'CONFIGURE INSTALLATION OPTIONS', cfg_status:'Configuration Status', adv_title:'ADVANCED CONFIGURATION MODE', tab_general:'General', tab_apt:'APT Packages', tab_pip:'Python Packages', tab_system:'System Config', tab_snippets:'Snippets' },
@@ -1812,7 +1838,7 @@
             return (UI_LABELS[currentLang] && UI_LABELS[currentLang][key]) || UI_LABELS.en[key] || key;
         }
         const UI_LABELS_EXTRA = {
-            en: { display_cfg:'Display Configuration', operation_settings:'Operation Settings', network_cfg:'Network Configuration', system_pkgs:'System Packages (APT)', python_pkgs:'Python Packages (PIP)', system_cfg_opts:'System Configuration Options', user_snippets:'User Script Snippets', snippets_include:'Snippets to include', add_apt:'Add APT', add_pip:'Add PIP', add_snippet:'Add Snippet', clear:'Clear', remove:'Remove', allow_uncheck_required:'Allow unchecking required', name:'Name', when_to_run:'When to run', script_bash:'Script (bash)', start_manual_mode:'Start in Manual Mode', enable_web_auth:'Enable Web Authentication', pre_install:'Pre-Install', post_install:'Post-Install', on_restart:'On Restart', manual:'Manual', placeholder_webui_password:'Web UI Password', placeholder_apt_ex:'ex: curl', placeholder_pip_ex:'ex: pillow', placeholder_version:'version (optional)', placeholder_snippet_name:'ex: enable-canbus', placeholder_snippet_code:'#!/usr/bin/env bash\\n# your commands here', online:'Online', local:'Local', debug:'Debug', custom:'Custom...', branch_or_tag:'branch or tag', auto_mode:'Auto Mode', manual_mode:'Manual Mode', ai_mode:'AI Mode', placeholder_ip_host:'IP or hostname', placeholder_password:'Enter password', placeholder_private_key:'Path to private key', placeholder_web_password:'Enter web UI password', placeholder_script_desc:'Description of your custom script' },
+            en: { display_cfg:'Display Configuration', operation_settings:'Operation Settings', network_cfg:'Network Configuration', system_pkgs:'System Packages (APT)', python_pkgs:'Python Packages (PIP)', system_cfg_opts:'System Configuration Options', user_snippets:'User Script Snippets', snippets_include:'Snippets to include', add_apt:'Add APT', add_pip:'Add PIP', add_snippet:'Add Snippet', clear:'Clear', remove:'Remove', allow_uncheck_required:'Allow unchecking required', name:'Name', when_to_run:'When to run', script_bash:'Script (bash)', start_manual_mode:'Start in Manual Mode', enable_web_auth:'Enable Web Authentication', pre_install:'Pre-Install', post_install:'Post-Install', on_restart:'On Restart', manual:'Manual', placeholder_webui_password:'Web UI Password', placeholder_apt_ex:'ex: curl', placeholder_pip_ex:'ex: pillow', placeholder_version:'version (optional)', placeholder_snippet_name:'ex: enable-canbus', placeholder_snippet_code:'#!/usr/bin/env bash\\n# your commands here', online:'Online', local:'Local', debug:'Debug', get_branches:'(Get Branches)', custom:'Custom...', branch_or_tag:'branch or tag', auto_mode:'Auto Mode', manual_mode:'Manual Mode', ai_mode:'AI Mode', placeholder_ip_host:'IP or hostname', placeholder_password:'Enter password', placeholder_private_key:'Path to private key', placeholder_web_password:'Enter web UI password', placeholder_script_desc:'Description of your custom script' },
             fr: { display_cfg:'Configuration affichage', operation_settings:'Paramètres opération', network_cfg:'Configuration réseau', system_pkgs:'Paquets système (APT)', python_pkgs:'Paquets Python (PIP)', system_cfg_opts:'Options configuration système', user_snippets:'Snippets utilisateur', snippets_include:'Snippets à inclure', add_apt:'Ajouter APT', add_pip:'Ajouter PIP', add_snippet:'Ajouter snippet', clear:'Effacer', remove:'Supprimer', allow_uncheck_required:'Autoriser décocher requis', name:'Nom', when_to_run:'Quand exécuter', script_bash:'Script (bash)', start_manual_mode:'Démarrer en mode manuel', enable_web_auth:'Activer auth web', pre_install:'Pré-installation', post_install:'Post-installation', on_restart:'Au redémarrage', manual:'Manuel', placeholder_webui_password:'Mot de passe Web UI', placeholder_apt_ex:'ex: curl', placeholder_pip_ex:'ex: pillow', placeholder_version:'version (optionnel)', placeholder_snippet_name:'ex: enable-canbus', placeholder_snippet_code:'#!/usr/bin/env bash\\n# vos commandes ici', online:'En ligne', local:'Local', debug:'Debug', custom:'Personnalisé...', branch_or_tag:'branche ou tag', auto_mode:'Mode auto', manual_mode:'Mode manuel', ai_mode:'Mode IA', placeholder_ip_host:'IP ou hostname', placeholder_password:'Entrer mot de passe', placeholder_private_key:'Chemin clé privée', placeholder_web_password:'Entrer mot de passe web', placeholder_script_desc:'Description du script personnalisé' },
             it: { display_cfg:'Configurazione display', operation_settings:'Impostazioni operative', network_cfg:'Configurazione rete', system_pkgs:'Pacchetti di sistema (APT)', python_pkgs:'Pacchetti Python (PIP)', system_cfg_opts:'Opzioni configurazione sistema', user_snippets:'Snippet utente', snippets_include:'Snippet da includere', add_apt:'Aggiungi APT', add_pip:'Aggiungi PIP', add_snippet:'Aggiungi snippet', clear:'Pulisci', remove:'Rimuovi', allow_uncheck_required:'Consenti deselezione richiesti', name:'Nome', when_to_run:'Quando eseguire', script_bash:'Script (bash)', start_manual_mode:'Avvia in modalità manuale', enable_web_auth:'Abilita autenticazione web', pre_install:'Pre-installazione', post_install:'Post-installazione', on_restart:'Al riavvio', manual:'Manuale', placeholder_webui_password:'Password Web UI', placeholder_apt_ex:'es: curl', placeholder_pip_ex:'es: pillow', placeholder_version:'versione (opzionale)', placeholder_snippet_name:'es: enable-canbus', placeholder_snippet_code:'#!/usr/bin/env bash\\n# i tuoi comandi qui', online:'Online', local:'Locale', debug:'Debug', custom:'Personalizzato...', branch_or_tag:'branch o tag', auto_mode:'Modalità auto', manual_mode:'Modalità manuale', ai_mode:'Modalità AI', placeholder_ip_host:'IP o hostname', placeholder_password:'Inserisci password', placeholder_private_key:'Percorso chiave privata', placeholder_web_password:'Inserisci password web', placeholder_script_desc:'Descrizione script personalizzato' },
             es: { display_cfg:'Configuración de pantalla', operation_settings:'Configuración de operación', network_cfg:'Configuración de red', system_pkgs:'Paquetes del sistema (APT)', python_pkgs:'Paquetes Python (PIP)', system_cfg_opts:'Opciones de configuración del sistema', user_snippets:'Snippets de usuario', snippets_include:'Snippets a incluir', add_apt:'Añadir APT', add_pip:'Añadir PIP', add_snippet:'Añadir snippet', clear:'Limpiar', remove:'Eliminar', allow_uncheck_required:'Permitir desmarcar requeridos', name:'Nombre', when_to_run:'Cuándo ejecutar', script_bash:'Script (bash)', start_manual_mode:'Iniciar en modo manual', enable_web_auth:'Habilitar autenticación web', pre_install:'Pre-instalación', post_install:'Post-instalación', on_restart:'Al reiniciar', manual:'Manual', placeholder_webui_password:'Contraseña Web UI', placeholder_apt_ex:'ej: curl', placeholder_pip_ex:'ej: pillow', placeholder_version:'versión (opcional)', placeholder_snippet_name:'ej: enable-canbus', placeholder_snippet_code:'#!/usr/bin/env bash\\n# tus comandos aquí', online:'En línea', local:'Local', debug:'Debug', custom:'Personalizado...', branch_or_tag:'rama o tag', auto_mode:'Modo auto', manual_mode:'Modo manual', ai_mode:'Modo IA', placeholder_ip_host:'IP o hostname', placeholder_password:'Ingrese contraseña', placeholder_private_key:'Ruta clave privada', placeholder_web_password:'Ingrese contraseña web', placeholder_script_desc:'Descripción del script personalizado' },
@@ -1844,15 +1870,79 @@
 
         function getSlotLabelsByLang(lang) {
             const labels = {
-                en: ['Stream Logs', 'Stop Logs', 'Change Screen', 'System Info', 'Reset Config'],
-                fr: ['Flux logs', 'Stop logs', 'Changer ecran', 'Infos systeme', 'Reset config'],
-                it: ['Stream log', 'Stop log', 'Cambia schermo', 'Info sistema', 'Reset config'],
-                es: ['Ver logs', 'Parar logs', 'Cambiar pantalla', 'Info sistema', 'Reset config'],
-                de: ['Logs streamen', 'Logs stoppen', 'Bildschirm wechseln', 'Systeminfo', 'Reset config'],
+                en: ['Stream Logs', 'Stop Logs', 'Resume Install', 'Stop Install', 'Change Screen', 'System Info', 'Reset Config', 'Delete Bjorn folder', 'Delete install_bjorn.sh'],
+                fr: ['Flux logs', 'Stop logs', 'Reprendre install', 'Stop install', 'Changer ecran', 'Infos systeme', 'Reset config', 'Supprimer dossier Bjorn', 'Supprimer install_bjorn.sh'],
+                it: ['Stream log', 'Stop log', 'Riprendi install', 'Stop install', 'Cambia schermo', 'Info sistema', 'Reset config', 'Elimina cartella Bjorn', 'Elimina install_bjorn.sh'],
+                es: ['Ver logs', 'Parar logs', 'Reanudar install', 'Stop install', 'Cambiar pantalla', 'Info sistema', 'Reset config', 'Borrar carpeta Bjorn', 'Borrar install_bjorn.sh'],
+                de: ['Logs streamen', 'Logs stoppen', 'Install fortsetzen', 'Install stoppen', 'Bildschirm wechseln', 'Systeminfo', 'Reset config', 'Bjorn-Ordner loeschen', 'install_bjorn.sh loeschen'],
                 zh: ['实时日志', '停止日志', '更改屏幕', '系统信息', '重置配置'],
                 ru: ['Поток логов', 'Стоп логи', 'Сменить экран', 'Инфо системы', 'Сброс конфигурации']
             };
+            labels.zh = ['Stream Logs', 'Stop Logs', 'Resume Install', 'Stop Install', 'Change Screen', 'System Info', 'Reset Config', 'Delete Bjorn folder', 'Delete install_bjorn.sh'];
+            labels.ru = ['Potok logov', 'Stop logi', 'Vozobnovit install', 'Ostanovit install', 'Smenit ekran', 'Info sistemy', 'Sbros konfiguracii', 'Udalit papku Bjorn', 'Udalit install_bjorn.sh'];
             return labels[lang] || labels.en;
+        }
+
+        function getNormalizedGitBranches(branches = []) {
+            const seen = new Set();
+            const normalized = [];
+            (branches || []).forEach((branch) => {
+                const name = String(branch || '').trim();
+                if (!name || name.startsWith('dependabot/') || seen.has(name)) return;
+                seen.add(name);
+                normalized.push(name);
+            });
+
+            const preferred = ['main', 'dev'];
+            const ordered = preferred.filter((name) => seen.has(name));
+            normalized
+                .filter((name) => !preferred.includes(name))
+                .sort((a, b) => a.localeCompare(b))
+                .forEach((name) => ordered.push(name));
+            return ordered.length ? ordered : ['main', 'dev'];
+        }
+
+        function renderGitBranchOptions(preferredValue = null) {
+            if (!elements || !elements.gitBranch) return;
+
+            const select = elements.gitBranch;
+            const previousValue = preferredValue ?? select.value ?? 'main';
+            const customValue = elements.gitBranchCustom ? elements.gitBranchCustom.value.trim() : '';
+            const branches = getNormalizedGitBranches(UIState.availableGitBranches);
+
+            select.innerHTML = '';
+            branches.forEach((branch) => {
+                const option = document.createElement('option');
+                option.value = branch;
+                option.textContent = branch;
+                select.appendChild(option);
+            });
+
+            const refreshOption = document.createElement('option');
+            refreshOption.value = '__refresh__';
+            refreshOption.textContent = LX('get_branches');
+            select.appendChild(refreshOption);
+
+            const customOption = document.createElement('option');
+            customOption.value = '__custom__';
+            customOption.textContent = LX('custom');
+            select.appendChild(customOption);
+
+            let nextValue = branches.includes(previousValue) ? previousValue : 'main';
+            if (previousValue === '__custom__' || (previousValue && !branches.includes(previousValue) && previousValue !== '__refresh__')) {
+                nextValue = '__custom__';
+                if (previousValue !== '__custom__' && previousValue !== '__refresh__' && elements.gitBranchCustom) {
+                    elements.gitBranchCustom.value = previousValue;
+                }
+            } else if (previousValue === '__refresh__') {
+                nextValue = branches.includes(select.dataset.lastSelectedBranch || '') ? select.dataset.lastSelectedBranch : nextValue;
+            }
+
+            select.value = nextValue;
+            select.dataset.lastSelectedBranch = nextValue === '__custom__' ? (customValue || elements.gitBranchCustom.value.trim() || 'main') : nextValue;
+            if (elements.gitBranchCustom) {
+                elements.gitBranchCustom.classList.toggle('hidden', nextValue !== '__custom__');
+            }
         }
 
         function applyTranslations() {
@@ -1967,8 +2057,7 @@
             if (installModeOptions[0]) installModeOptions[0].textContent = LX('online');
             if (installModeOptions[1]) installModeOptions[1].textContent = LX('local');
             if (installModeOptions[2]) installModeOptions[2].textContent = LX('debug');
-            const gitOptions = document.querySelectorAll('#gitBranch option');
-            if (gitOptions[2]) gitOptions[2].textContent = LX('custom');
+            renderGitBranchOptions(elements.gitBranch ? elements.gitBranch.value : 'main');
             setText('#operationModeAutoLabel', LX('auto_mode'));
             setText('#operationModeManualLabel', LX('manual_mode'));
             setText('#operationModeAiLabel', LX('ai_mode'));
@@ -2151,6 +2240,7 @@
             elements.restartBtn.disabled = true;
             elements.rebootBtn.disabled = true;
             elements.uploadBtn.disabled = true;
+            refreshInstallActionButtons();
             
             if (window.pywebview && window.pywebview.api) {
                 window.pywebview.api.start_discovery();
@@ -2644,6 +2734,11 @@ function populateAdvancedOptionsDemo() {
             });
 
             elements.gitBranch.addEventListener('change', (e) => {
+                if (e.target.value === '__refresh__') {
+                    handleFetchGitBranches();
+                    return;
+                }
+                e.target.dataset.lastSelectedBranch = e.target.value;
                 elements.gitBranchCustom.classList.toggle('hidden', e.target.value !== '__custom__');
                 if (e.target.value === '__custom__') elements.gitBranchCustom.focus();
             });
@@ -2746,6 +2841,14 @@ function populateAdvancedOptionsDemo() {
             elements.installBtn.disabled = !connected;
             elements.restartBtn.disabled = !connected;
             elements.rebootBtn.disabled = !connected;
+            refreshInstallActionButtons();
+        }
+
+        function refreshInstallActionButtons() {
+            const connected = UIState.connected;
+            const installing = UIState.installing;
+
+            elements.installBtn.disabled = !connected || installing;
         }
     
         // ======== CYLINDER MENU ========
@@ -2855,7 +2958,7 @@ function populateAdvancedOptionsDemo() {
             }
     
             // main menu actions
-            if (!UIState.connected && ['stream_logs', 'stop_log_stream', 'change_screen'].includes(action)) {
+            if (!UIState.connected && ['stream_logs', 'stop_log_stream', 'resume_install', 'stop_install', 'change_screen', 'delete_bjorn_folder', 'delete_install_script'].includes(action)) {
                 const ok = await ensureConnectedForAction();
                 if (!ok) {
                     hideSlotMachine();
@@ -2871,6 +2974,14 @@ function populateAdvancedOptionsDemo() {
                     await stopLogStream();
                     hideSlotMachine();
                     break;
+                case 'resume_install':
+                    await handleResumeInstall();
+                    hideSlotMachine();
+                    break;
+                case 'stop_install':
+                    await handleStopInstall();
+                    hideSlotMachine();
+                    break;
                 case 'change_screen':
                     UIState.menuStack.push({ mode: 'main', index: UIState.slotIndexByMode['main'] });
                     UIState.slotMode = 'epd';
@@ -2882,6 +2993,14 @@ function populateAdvancedOptionsDemo() {
                     break;
                 case 'reset_config':
                     resetConfig();
+                    hideSlotMachine();
+                    break;
+                case 'delete_bjorn_folder':
+                    await handleDeleteBjornFolder();
+                    hideSlotMachine();
+                    break;
+                case 'delete_install_script':
+                    await handleDeleteInstallScript();
                     hideSlotMachine();
                     break;
             }
@@ -3098,6 +3217,7 @@ function populateAdvancedOptionsDemo() {
         }
     
         function setInstallationMode(installing) {
+            UIState.installing = !!installing;
             elements.progressSection.classList.toggle('hidden', !installing);
             
             // Show/hide terminal and adjust layout based on installation mode
@@ -3112,6 +3232,7 @@ function populateAdvancedOptionsDemo() {
                 logMessage(t('status_install_mode_off'), 'info');
                 updateProgress(0, 100, t('idle'));
             }
+            refreshInstallActionButtons();
         }
         
         function updateDeviceConnectionStatus(ip, connected) {
@@ -3394,7 +3515,73 @@ function populateAdvancedOptionsDemo() {
                 }
             }
         }
-    
+
+        async function handleFetchGitBranches() {
+            if (!(window.pywebview && window.pywebview.api)) {
+                renderGitBranchOptions(elements.gitBranch.dataset.lastSelectedBranch || 'main');
+                return;
+            }
+
+            logMessage(t('status_fetching_branches'), 'info');
+            const previousValue = elements.gitBranch.dataset.lastSelectedBranch || elements.gitBranch.value || 'main';
+            elements.gitBranch.disabled = true;
+
+            try {
+                const result = await window.pywebview.api.get_git_branches();
+                if (result.success) {
+                    UIState.availableGitBranches = getNormalizedGitBranches(result.branches || []);
+                    renderGitBranchOptions(previousValue);
+                    logMessage(t('status_git_branches_loaded', { count: UIState.availableGitBranches.length }), 'success');
+                } else {
+                    renderGitBranchOptions(previousValue);
+                    logMessage(t('status_git_branches_failed', { error: result.error }), 'error');
+                }
+            } catch (error) {
+                renderGitBranchOptions(previousValue);
+                logMessage(t('status_git_branches_failed', { error: error && error.message ? error.message : error }), 'error');
+            } finally {
+                elements.gitBranch.disabled = false;
+            }
+        }
+
+        async function handleResumeInstall() {
+            if (window.pywebview && window.pywebview.api) {
+                const result = await window.pywebview.api.resume_install_logs();
+                if (!result.success) {
+                    logMessage(t('status_resume_install_failed', { error: result.error }), 'error');
+                }
+            }
+        }
+
+        async function handleStopInstall() {
+            if (window.pywebview && window.pywebview.api) {
+                const result = await window.pywebview.api.stop_install();
+                if (!result.success) {
+                    logMessage(t('status_stop_install_failed', { error: result.error }), 'error');
+                }
+            }
+        }
+
+        async function handleDeleteBjornFolder() {
+            if (!confirm(t('confirm_delete_bjorn_folder'))) return;
+            if (window.pywebview && window.pywebview.api) {
+                const result = await window.pywebview.api.delete_bjorn_folder();
+                if (!result.success) {
+                    logMessage(t('status_delete_bjorn_failed', { error: result.error }), 'error');
+                }
+            }
+        }
+
+        async function handleDeleteInstallScript() {
+            if (!confirm(t('confirm_delete_install_script'))) return;
+            if (window.pywebview && window.pywebview.api) {
+                const result = await window.pywebview.api.delete_install_script();
+                if (!result.success) {
+                    logMessage(t('status_delete_install_script_failed', { error: result.error }), 'error');
+                }
+            }
+        }
+
         async function handleRestartBjorn() {
             if (window.pywebview && window.pywebview.api) {
                 const result = await window.pywebview.api.restart_bjorn();
@@ -3456,7 +3643,9 @@ async function handleUploadCustomScript() {
                     : elements.customScriptDesc.value,
                 gitBranch: elements.gitBranch.value === '__custom__'
                     ? elements.gitBranchCustom.value.trim() || 'main'
-                    : elements.gitBranch.value
+                    : (elements.gitBranch.value === '__refresh__'
+                        ? (elements.gitBranch.dataset.lastSelectedBranch || 'main')
+                        : elements.gitBranch.value)
             };
         }
     // 4. Callback pour mettre à jour le statut après génération

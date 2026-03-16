@@ -27,6 +27,7 @@ NON_INTERACTIVE="${NON_INTERACTIVE:-0}"
 DEBUG_MODE="${DEBUG_MODE:-false}"
 INSTALL_MODE="${INSTALL_MODE:-online}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
+WIFI_MIGRATION="${WIFI_MIGRATION:-1}"
 PACKAGES_PATH="${PACKAGES_PATH:-bjorn_packages}"
 PACKAGE_ARCHIVE="${PACKAGE_ARCHIVE:-/home/bjorn/bjorn_packages.tar.gz}"
 EXTRACT_DIR=""
@@ -127,7 +128,8 @@ while [[ "$#" -gt 0 ]]; do
             echo -e "  enable_auth         y or n"
             echo -e "  WEBUI_PASSWORD      Web UI password (if enable_auth=y)"
             echo -e "  BLUETOOTH_MAC_ADDRESS  Bluetooth MAC address"
-            echo -e "  GIT_BRANCH          Git branch to clone\n"
+            echo -e "  GIT_BRANCH          Git branch to clone"
+            echo -e "  WIFI_MIGRATION      1 to migrate preconfigured Wi-Fi, 0 to skip\n"
             exit 0
             ;;
         *)
@@ -243,7 +245,14 @@ main() {
     install_dependencies
 
     CURRENT_STEP=$((CURRENT_STEP+1)); show_progress "Managing Wi-Fi connections"
-    manage_wifi_connections
+    if [ "${WIFI_MIGRATION:-1}" = "1" ]; then
+        manage_wifi_connections
+    else
+        log "WARNING" "Skipping Wi-Fi migration step because WIFI_MIGRATION=${WIFI_MIGRATION}"
+    fi
+
+    CURRENT_STEP=$((CURRENT_STEP+1)); show_progress "Setting up auto open Wi-Fi"
+    setup_bjorn_open_wifi
 
     CURRENT_STEP=$((CURRENT_STEP+1)); show_progress "Configuring system limits"
     configure_system_limits

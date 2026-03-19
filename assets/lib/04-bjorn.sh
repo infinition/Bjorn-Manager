@@ -247,7 +247,7 @@ EOF
 
     # Additional critical pip packages (not always in requirements.txt)
     log "INFO" "Installing additional pip packages..."
-    for extra_pkg in "RPi.GPIO" "spidev" "netifaces" "paramiko" "scapy" "telnetlib3"; do
+    for extra_pkg in "RPi.GPIO" "spidev" "netifaces" "paramiko" "scapy" "telnetlib3" "telnetlib-313-and-up"; do
         log "INFO" "Installing pip package: $extra_pkg"
         if pip_install --prefer-binary "$extra_pkg"; then
             log "SUCCESS" "Installed pip package: $extra_pkg"

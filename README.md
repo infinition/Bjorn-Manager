@@ -1,4 +1,4 @@
-<img src="https://github.com/user-attachments/assets/9cd52e7f-637d-45ad-94b8-07b1a93277a6" alt="Bjorn Manager" width="120">
+<img width="396" height="396" alt="image-removebg-preview (1)" src="https://github.com/user-attachments/assets/4bac23ae-b82a-437b-9c8b-997df351228d" />
 
 # Bjorn Manager
 
